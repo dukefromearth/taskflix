@@ -1,0 +1,8 @@
+{
+  "/(shell)/timeline/page": "app/(shell)/timeline/page.js",
+  "/api/items/route": "app/api/items/route.js",
+  "/api/projects/route": "app/api/projects/route.js",
+  "/api/saved-views/route": "app/api/saved-views/route.js",
+  "/api/timeline/route": "app/api/timeline/route.js",
+  "/api/views/[name]/route": "app/api/views/[name]/route.js"
+}

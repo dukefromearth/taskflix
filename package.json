@@ -1,0 +1,50 @@
+{
+  "name": "taskio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Time-aware personal project surface",
+  "type": "module",
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "start": "next start",
+    "bootstrap:db": "tsx scripts/bootstrap-db.ts",
+    "migrate:up": "tsx scripts/migrate.ts up",
+    "migrate:down": "tsx scripts/migrate.ts down",
+    "migrate:status": "tsx scripts/migrate.ts status",
+    "reindex:fts": "tsx scripts/reindex-fts.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify": "npm run test && npm run build"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@tanstack/react-query": "^5.90.21",
+    "autoprefixer": "^10.4.27",
+    "better-sqlite3": "^12.8.0",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
+    "kysely": "^0.28.12",
+    "next": "^16.1.6",
+    "postcss": "^8.5.8",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-markdown": "^10.1.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss": "^3.4.17",
+    "ulid": "^2.4.0",
+    "zod": "^4.3.6",
+    "zustand": "^5.0.11"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.13.11",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.9"
+  }
+}
