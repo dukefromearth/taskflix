@@ -67,14 +67,30 @@ test('golden path: timeline playback/scrub/mutation uses split endpoints and sta
   const counters = {
     structure: 0,
     summary: 0,
-    legacy: 0
+    monolith: 0
   };
   const summaryBucketKeys = new Set<string>();
+  let summaryAbortCount = 0;
+
+  await page.route('**/api/timeline/summary**', async (route) => {
+    await page.waitForTimeout(300);
+    await route.continue();
+  });
 
   page.on('request', (requestEvent) => {
     const url = new URL(requestEvent.url());
     if (url.pathname === '/api/timeline') {
-      counters.legacy += 1;
+      counters.monolith += 1;
+    }
+  });
+
+  page.on('requestfailed', (requestEvent) => {
+    const url = new URL(requestEvent.url());
+    if (url.pathname !== '/api/timeline/summary') return;
+    const failure = requestEvent.failure();
+    if (!failure?.errorText) return;
+    if (failure.errorText.toLowerCase().includes('abort')) {
+      summaryAbortCount += 1;
     }
   });
 
@@ -127,7 +143,24 @@ test('golden path: timeline playback/scrub/mutation uses split endpoints and sta
   const playheadLabelAfter = await page.getByText(/^Playhead /).first().textContent();
   expect(playheadLabelAfter).not.toBe(playheadLabelBefore);
 
-  expect(counters.legacy).toBe(0);
+  await page.evaluate(() => {
+    const scrubber = document.querySelector<HTMLInputElement>('input[aria-label="Timeline playhead scrubber"]');
+    if (!scrubber) return;
+    const min = Number(scrubber.min);
+    const max = Number(scrubber.max);
+    const step = Number(scrubber.step || '1');
+
+    for (let index = 0; index < 24; index += 1) {
+      const next = Math.min(max, min + step * (index + 1));
+      scrubber.value = String(next);
+      scrubber.dispatchEvent(new Event('input', { bubbles: true }));
+      scrubber.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+
+  await expect.poll(() => summaryAbortCount).toBeGreaterThan(0);
+
+  expect(counters.monolith).toBe(0);
   expect(counters.structure).toBe(1);
 
   const summaryCountBeforeMutation = counters.summary;

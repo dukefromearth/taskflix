@@ -1,32 +1,23 @@
 ---
 title: Seed Callgraph from Real Ingress Entrypoints
 impact: HIGH
-impactDescription: improves graph relevance and architecture signal
-tags: callgraph, entrypoints, architecture
+tags: callgraph, entrypoints, signal
 ---
 
 ## Seed Callgraph from Real Ingress Entrypoints
 
-Choose entrypoints that represent actual runtime ingress (HTTP routes, server
-bootstrap, CLI entry file). Arbitrary seeds produce misleading graphs.
+Choose entrypoints that represent real runtime ingress (API handlers, server bootstrap, CLI main). Arbitrary seeds create noisy, low-value graphs.
 
-**Incorrect (non-ingress utility seeds):**
+**Incorrect (random seed files):**
 
-```json
-{
-  "entrypoints": ["src/utils/**/*.ts"]
-}
+```bash
+npm run arch -- --callgraph --entry "src/**/*.ts"
 ```
 
-**Correct (runtime ingress seeds):**
+**Correct (explicit ingress seeds):**
 
-```json
-{
-  "entrypoints": [
-    "src/index.ts",
-    "app/api/**/*.ts"
-  ]
-}
+```bash
+npm run arch -- --callgraph --entry src/index.ts --entry src/server.ts
 ```
 
-Reference: [fast-glob patterns](https://github.com/mrmlnc/fast-glob#pattern-syntax)
+Reference: [TypeScript program modeling](https://www.typescriptlang.org/)

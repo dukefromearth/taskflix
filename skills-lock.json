@@ -1,6 +1,11 @@
 {
   "version": 1,
   "skills": {
+    "duke-dependency-generator": {
+      "source": "dukefromearth/agent-skills",
+      "sourceType": "github",
+      "computedHash": "498a1e643b9483bbf069506eb6ff5a80902df890b8fc1ccedea33fe041724de3"
+    },
     "vercel-react-best-practices": {
       "source": "vercel-labs/agent-skills",
       "sourceType": "github",

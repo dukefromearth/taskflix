@@ -223,26 +223,48 @@ export class TimelineReadModel {
     }
 
     const repos = this.createRepositories();
-    const [plannedItemIds, bucketRealityEvents, overdueCount, interruptionItems] = await Promise.all([
+    const [plannedItemIds, realityCount, realityItemIds, recentEvents, overdueCount, interruptionItemCount, interruptionCreatedEventCount] =
+      await Promise.all([
       repos.items.listTimelinePlannedIdsInWindow({
         windowStart: selectedBucket.bucketStart,
         windowEnd: selectedBucket.bucketEnd,
         projectIds: scope.projectIds,
         includeUnprojected: scope.includeUnprojected
       }),
-      repos.events.listTimelineInWindow({
+      repos.events.countTimelineEventsInWindow({
         windowStart: selectedBucket.bucketStart,
         windowEnd: selectedBucket.bucketEnd,
         eventTypes: TIMELINE_REALITY_EVENT_TYPES,
         projectIds: scope.projectIds,
         includeUnprojected: scope.includeUnprojected
       }),
+      repos.events.listTimelineDistinctRealityItemIdsInBucket({
+        windowStart: selectedBucket.bucketStart,
+        windowEnd: selectedBucket.bucketEnd,
+        eventTypes: TIMELINE_REALITY_EVENT_TYPES,
+        projectIds: scope.projectIds,
+        includeUnprojected: scope.includeUnprojected
+      }),
+      repos.events.listTimelineRecentEventsInBucket({
+        windowStart: selectedBucket.bucketStart,
+        windowEnd: selectedBucket.bucketEnd,
+        eventTypes: TIMELINE_REALITY_EVENT_TYPES,
+        projectIds: scope.projectIds,
+        includeUnprojected: scope.includeUnprojected,
+        limit: 12
+      }),
       repos.items.countTimelineOpenDueBefore({
         dueBefore: selectedBucket.bucketEnd,
         projectIds: scope.projectIds,
         includeUnprojected: scope.includeUnprojected
       }),
-      repos.items.listTimelineInterruptionsInWindow({
+      repos.items.countTimelineInterruptionsInWindow({
+        windowStart: selectedBucket.bucketStart,
+        windowEnd: selectedBucket.bucketEnd,
+        projectIds: scope.projectIds,
+        includeUnprojected: scope.includeUnprojected
+      }),
+      repos.events.countTimelineInterruptionCreatedEventsInBucket({
         windowStart: selectedBucket.bucketStart,
         windowEnd: selectedBucket.bucketEnd,
         projectIds: scope.projectIds,
@@ -250,12 +272,7 @@ export class TimelineReadModel {
       })
     ]);
 
-    const interruptionItemSet = new Set(interruptionItems.map((item) => item.id));
-    const interruptionFromEvents = bucketRealityEvents.filter(
-      (event) => event.eventType === 'item.created' && interruptionItemSet.has(event.itemId)
-    );
-
-    const topItemIds = [...new Set([...plannedItemIds, ...bucketRealityEvents.map((event) => event.itemId)])];
+    const topItemIds = [...new Set([...plannedItemIds, ...realityItemIds])];
     const topItems = (await this.deps.rowsForItemIds(topItemIds, scope.now))
       .sort((a, b) => {
         if (a.priority !== b.priority) return b.priority - a.priority;
@@ -264,7 +281,6 @@ export class TimelineReadModel {
       })
       .slice(0, 12);
 
-    const recentEvents = bucketRealityEvents.sort((a, b) => b.occurredAt - a.occurredAt).slice(0, 12);
     const bucketIdentity = timelineBucketIdentity({
       bucketStart: selectedBucket.bucketStart,
       bucketEnd: selectedBucket.bucketEnd,
@@ -287,9 +303,10 @@ export class TimelineReadModel {
       playheadLabel: selectedBucket.bucketLabel,
       counts: {
         plan: plannedItemIds.length,
-        reality: bucketRealityEvents.length,
+        reality: realityCount,
         overdue: overdueCount,
-        interruptions: interruptionItems.length + interruptionFromEvents.length
+        // TODO(GOTCHA): Interruptions currently add interruption items and interruption-created events.
+        interruptions: interruptionItemCount + interruptionCreatedEventCount
       },
       topItems,
       recentEvents
@@ -312,7 +329,7 @@ export class TimelineReadModel {
     const hasExplicitProjectScope = Boolean(input.projectIds && input.projectIds.length > 0);
     const defaultProjectIds = allProjects.filter((project) => project.status !== 'archived').map((project) => project.id);
 
-    // TODO(GOTCHA): Default scope intentionally includes unprojected items to preserve legacy timeline semantics.
+    // TODO(GOTCHA): Default scope intentionally includes unprojected items when no project filter is provided.
     const projectIds = hasExplicitProjectScope ? input.projectIds ?? [] : defaultProjectIds;
     const includeUnprojected = !hasExplicitProjectScope;
 

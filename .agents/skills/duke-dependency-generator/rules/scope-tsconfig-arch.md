@@ -1,37 +1,29 @@
 ---
-title: Use a Dedicated tsconfig.arch.json for Static Analysis
+title: Use a Dedicated tsconfig.arch.json for Analysis Scope
 impact: CRITICAL
-impactDescription: prevents generated/build artifacts from polluting results
-tags: scope, typescript, tsconfig
+tags: scope, tsconfig, deterministic
 ---
 
-## Use a Dedicated tsconfig.arch.json for Static Analysis
+## Use a Dedicated tsconfig.arch.json for Analysis Scope
 
-Create a dedicated analysis tsconfig instead of reusing the app build tsconfig.
-Keep analysis input explicit and stable.
+Architecture analysis should run in a dedicated TS project so test/build artifacts and generated files do not pollute graph output.
 
-**Incorrect (reuse broad app tsconfig):**
-
-```json
-{
-  "project": "./tsconfig.json"
-}
-```
-
-**Correct (dedicated arch tsconfig):**
+**Incorrect (reusing app tsconfig pulls too much):**
 
 ```json
 {
-  "project": "./tsconfig.arch.json"
+  "extends": "./tsconfig.json"
 }
 ```
+
+**Correct (explicit analysis scope):**
 
 ```json
 {
   "extends": "./tsconfig.json",
-  "include": ["src/**/*.ts", "app/**/*.ts", "app/**/*.tsx"],
-  "exclude": [".next", "dist", "test", "**/*.test.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["dist", "build", "coverage", "**/*.test.ts", "**/*.spec.ts"]
 }
 ```
 
-Reference: [TypeScript TSConfig Reference](https://www.typescriptlang.org/tsconfig/)
+Reference: [TSConfig reference](https://www.typescriptlang.org/tsconfig/)

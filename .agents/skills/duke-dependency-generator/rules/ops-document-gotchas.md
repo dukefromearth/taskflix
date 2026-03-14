@@ -1,27 +1,26 @@
 ---
-title: Keep a Living GOTCHA List for Implementation Traps
+title: Keep a Living GOTCHA Log for Recurring Failure Modes
 impact: MEDIUM
-impactDescription: prevents recurring setup and debugging churn
-tags: ops, gotchas, maintenance
+tags: ops, gotchas, docs
 ---
 
-## Keep a Living GOTCHA List for Implementation Traps
+## Keep a Living GOTCHA Log for Recurring Failure Modes
 
-Capture weird but recurring issues directly in skill docs so agents and humans
-stop rediscovering the same failures.
+When setup or output behaves unexpectedly, document the trap in repo docs so future implementations avoid rediscovering it.
 
 **Incorrect (tribal knowledge only):**
 
 ```text
-No gotcha notes. Team learns by repeated breakage.
+Team members repeatedly hit zsh globbing, entrypoint explosion, and npm preamble parsing issues.
 ```
 
-**Correct (explicit gotchas):**
+**Correct (capture gotchas immediately):**
 
-```text
-GOTCHA: zsh may not expand dotfile globs like .dependency-cruiser* by default.
-GOTCHA: npm run output includes command preamble lines before Mermaid.
-GOTCHA: broad app-router entrypoints can explode callgraph edge counts.
+```markdown
+## GOTCHAs
+- zsh expands unquoted globs; quote file patterns.
+- npm command output includes preamble lines; parse graph sections explicitly.
+- broad callgraph entrypoints can exceed max edge budgets.
 ```
 
-Reference: [zsh filename generation](https://zsh.sourceforge.io/Doc/Release/Expansion.html#Filename-Generation)
+Reference: [GitHub Markdown](https://docs.github.com/en/get-started/writing-on-github)

@@ -1,43 +1,30 @@
 ---
-title: Merge with Generated Dependency-Cruiser Config
+title: Merge Mermaid Output Options with Generated depcruise Config
 impact: HIGH
-impactDescription: preserves repository-specific resolver and rule behavior
-tags: deps, dependency-cruiser, config
+tags: deps, depcruise, mermaid
 ---
 
-## Merge with Generated Dependency-Cruiser Config
+## Merge Mermaid Output Options with Generated depcruise Config
 
-When producing Mermaid output, layer reporter overrides on top of
-`.dependency-cruiser.cjs` instead of replacing it. Replacing it discards repo
-resolution defaults.
+Custom graph output should extend generated dependency-cruiser config, not replace it, to preserve repository-specific resolver behavior.
 
-**Incorrect (replace all options):**
+**Incorrect (replace baseline resolver):**
 
 ```js
-module.exports = {
-  options: {
-    reporterOptions: { mermaid: { minify: true } }
+const config = { outputType: "mermaid" }
+```
+
+**Correct (merge with baseline):**
+
+```js
+const config = {
+  ...baseConfig,
+  outputType: "mermaid",
+  reporterOptions: {
+    ...(baseConfig.reporterOptions ?? {}),
+    dot: { ...(baseConfig.reporterOptions?.dot ?? {}), collapsePattern: "node_modules" }
   }
 }
 ```
 
-**Correct (merge base options):**
-
-```js
-const base = require("/repo/.dependency-cruiser.cjs")
-module.exports = {
-  ...base,
-  options: {
-    ...(base.options ?? {}),
-    reporterOptions: {
-      ...((base.options ?? {}).reporterOptions ?? {}),
-      mermaid: {
-        ...(((base.options ?? {}).reporterOptions ?? {}).mermaid ?? {}),
-        minify: true,
-      },
-    },
-  },
-}
-```
-
-Reference: [dependency-cruiser CLI](https://raw.githubusercontent.com/sverweij/dependency-cruiser/main/doc/cli.md)
+Reference: [dependency-cruiser configuration](https://github.com/sverweij/dependency-cruiser)

@@ -35,5 +35,5 @@ Taskio is now a Next.js App Router full-stack application with a SQLite/Kysely b
 
 - File binaries are stored on local disk under `.uploads/` by default.
 - Set `DATABASE_URL` to control the SQLite file path (default: `./taskio.db`).
-- Legacy `/api/timeline` has been removed; use only `/api/timeline/structure` and `/api/timeline/summary`.
+- Use only `/api/timeline/structure` and `/api/timeline/summary`.
 - Integration tests start a real app server and use a dedicated DB at `tmp/integration/taskio.integration.sqlite`.

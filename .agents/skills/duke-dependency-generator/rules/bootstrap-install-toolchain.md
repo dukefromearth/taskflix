@@ -1,29 +1,27 @@
 ---
-title: Install the Full Analysis Toolchain First
+title: Install Required Analysis Libraries Before Any Init Step
 impact: CRITICAL
-impactDescription: avoids runtime command failures and version drift
-tags: bootstrap, dependencies, tooling
+tags: bootstrap, install, dependency-cruiser, ts-morph, fast-glob
 ---
 
-## Install the Full Analysis Toolchain First
+## Install Required Analysis Libraries Before Any Init Step
 
-Install and pin the graph stack in `devDependencies`: dependency graph engine,
-AST/type engine, and globbing support.
+`dependency-cruiser`, `ts-morph`, and `fast-glob` are hard requirements for this architecture workflow. Install them before initialization or wrapper scripts.
 
-This is the first required step in a fresh repository.
-
-**Incorrect (partial install):**
+**Incorrect (partial setup causes failure):**
 
 ```bash
 npm install --save-dev dependency-cruiser
+npx depcruise --init oneshot
+npm run arch
 ```
 
-**Correct (complete install):**
+**Correct (full install first):**
 
 ```bash
 npm install --save-dev dependency-cruiser ts-morph fast-glob
+npx depcruise --init oneshot
+npm run arch -- --help
 ```
 
-`GOTCHA: Running init or wrapper scripts before this step often leads to inconsistent local/remote tool versions.`
-
-Reference: [fast-glob README](https://github.com/mrmlnc/fast-glob#readme)
+Reference: [dependency-cruiser](https://github.com/sverweij/dependency-cruiser)

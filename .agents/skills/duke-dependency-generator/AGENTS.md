@@ -1,156 +1,300 @@
 # Duke Dependency Generator
 
-**Version 0.1.0**
-Duke Engineering
+**Version 0.1.0**  
+Duke Engineering  
 March 2026
 
-> Note:
-> This guide is written primarily for agents and AI-assisted workflows. It
-> prioritizes deterministic behavior, explicit contracts, and low-friction
-> debugging over stylistic preferences.
+> **Note:**  
+> This guide is optimized for agents and AI-assisted engineering workflows.
+> It prioritizes deterministic behavior, explicit contracts, and maintainable defaults.
 
 ---
 
 ## Abstract
 
-A practical architecture-graph implementation framework for TypeScript repos,
-built around dependency-cruiser, ts-morph, and fast-glob. The rules are
-ordered by risk: bootstrap/setup correctness first, then scope and graph
-fidelity, then CLI contract and deterministic verification, then operational
-hygiene.
+Implementation guide for adding deterministic architecture graph generation to TypeScript repositories. This skill focuses on install-first bootstrap, dependency-cruiser initialization, scope modeling, stable graph output, strict CLI contracts, and repeatability checks.
 
 ---
 
 ## Table of Contents
 
-1. Bootstrap and Toolchain (CRITICAL)
-   - 1.1 Install the Full Analysis Toolchain as Dev Dependencies
-   - 1.2 Initialize Dependency-Cruiser Before Custom Wrappers
-2. Scope and Project Model (CRITICAL)
-   - 2.1 Use a Dedicated tsconfig.arch.json for Static Analysis
-   - 2.2 Align roots, includeOnly, and exclude to Real Repo Topology
-3. Dependency Graph Generation (HIGH)
-   - 3.1 Merge with Generated Dependency-Cruiser Config
-   - 3.2 Support Readable and Minified Mermaid Dependency Output
-4. Type Graph Generation (HIGH)
-   - 4.1 Default Type Graph to Exported Declarations with Hard Caps
-   - 4.2 Make Type Graph IDs and Ordering Deterministic
-5. Callgraph Generation (HIGH)
-   - 5.1 Seed Callgraph from Real Ingress Entrypoints
-   - 5.2 Enforce maxDepth and maxEdges in Callgraph Traversal
-6. CLI Contract (HIGH)
-   - 6.1 Validate Required CLI Flag Values Explicitly
-   - 6.2 Emit Section Markers and a Clear --help Contract
-7. Verification and Determinism (MEDIUM)
-   - 7.1 Verify the Full Command Matrix, Not Just Default Mode
-   - 7.2 Prove Repeatability with Diff-Based Re-Runs
-8. Operational Hygiene (MEDIUM)
-   - 8.1 Keep a Living GOTCHA List for Implementation Traps
-   - 8.2 Keep README, CLI Help, and Config Paths in Sync
+1. [Bootstrap and Toolchain](#1-bootstrap-and-toolchain) — **CRITICAL**
+   - 1.1 [Install Required Analysis Libraries Before Any Init Step](#11-install-required-analysis-libraries-before-any-init-step)
+2. [Scope and Project Model](#2-scope-and-project-model) — **CRITICAL**
+   - 2.1 [Use a Dedicated tsconfig.arch.json for Analysis Scope](#21-use-a-dedicated-tsconfigarchjson-for-analysis-scope)
+3. [Dependency Graph Generation](#3-dependency-graph-generation) — **HIGH**
+   - 3.1 [Merge Mermaid Output Options with Generated depcruise Config](#31-merge-mermaid-output-options-with-generated-depcruise-config)
+4. [Type Graph Generation](#4-type-graph-generation) — **HIGH**
+   - 4.1 [Keep Type Graph IDs and Ordering Deterministic](#41-keep-type-graph-ids-and-ordering-deterministic)
+5. [Callgraph Generation](#5-callgraph-generation) — **HIGH**
+   - 5.1 [Seed Callgraph from Real Ingress Entrypoints](#51-seed-callgraph-from-real-ingress-entrypoints)
+6. [CLI Contract](#6-cli-contract) — **HIGH**
+   - 6.1 [Validate CLI Arguments Before Execution](#61-validate-cli-arguments-before-execution)
+7. [Verification and Determinism](#7-verification-and-determinism) — **MEDIUM**
+   - 7.1 [Prove Repeatability with Diff-Based Re-Runs](#71-prove-repeatability-with-diff-based-re-runs)
+8. [Operational Hygiene](#8-operational-hygiene) — **MEDIUM**
+   - 8.1 [Keep a Living GOTCHA Log for Recurring Failure Modes](#81-keep-a-living-gotcha-log-for-recurring-failure-modes)
 
 ---
 
 ## 1. Bootstrap and Toolchain
 
-### 1.1 Install the Full Analysis Toolchain as Dev Dependencies
-Install `dependency-cruiser`, `ts-morph`, and `fast-glob` together to avoid
-partial feature failures.
+**Impact: CRITICAL**
+
+Installation and initialization mistakes are the most common cause of failed architecture workflows.
+
+### 1.1 Install Required Analysis Libraries Before Any Init Step
+
+**Impact: CRITICAL**
+
+`dependency-cruiser`, `ts-morph`, and `fast-glob` are hard requirements for this architecture workflow. Install them before initialization or wrapper scripts.
+
+**Incorrect: partial setup causes failure**
+
+```bash
+npm install --save-dev dependency-cruiser
+npx depcruise --init oneshot
+npm run arch
+```
+
+**Correct: full install first**
 
 ```bash
 npm install --save-dev dependency-cruiser ts-morph fast-glob
+npx depcruise --init oneshot
+npm run arch -- --help
 ```
 
-### 1.2 Initialize Dependency-Cruiser Before Custom Wrappers
-After install, run `npx depcruise --init oneshot` so repository-tuned baseline
-config is present before wrapper scripts are added.
+Reference: [https://github.com/sverweij/dependency-cruiser](https://github.com/sverweij/dependency-cruiser)
 
 ---
 
 ## 2. Scope and Project Model
 
-### 2.1 Use a Dedicated tsconfig.arch.json for Static Analysis
-Use dedicated analysis tsconfig to keep generated artifacts and test files out
-of graph construction.
+**Impact: CRITICAL**
 
-### 2.2 Align roots, includeOnly, and exclude to Real Repo Topology
-Match `roots` + `includeOnly` to actual source areas (`src`, `app`, etc.) and
-apply explicit excludes for build/test/generated output.
+Graph quality depends on accurate include/exclude scope and a dedicated analysis TS project.
+
+### 2.1 Use a Dedicated tsconfig.arch.json for Analysis Scope
+
+**Impact: CRITICAL**
+
+Architecture analysis should run in a dedicated TS project so test/build artifacts and generated files do not pollute graph output.
+
+**Incorrect: reusing app tsconfig pulls too much**
+
+```json
+{
+  "extends": "./tsconfig.json"
+}
+```
+
+**Correct: explicit analysis scope**
+
+```json
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["dist", "build", "coverage", "**/*.test.ts", "**/*.spec.ts"]
+}
+```
+
+Reference: [https://www.typescriptlang.org/tsconfig/](https://www.typescriptlang.org/tsconfig/)
 
 ---
 
 ## 3. Dependency Graph Generation
 
-### 3.1 Merge with Generated Dependency-Cruiser Config
-When customizing Mermaid rendering, merge into `.dependency-cruiser` options;
-do not replace baseline resolver behavior.
+**Impact: HIGH**
 
-### 3.2 Support Readable and Minified Mermaid Dependency Output
-Expose `--minify true|false` so debugging and compact reporting are both
-supported.
+Dependency graph customization must preserve repository-specific resolver behavior.
+
+### 3.1 Merge Mermaid Output Options with Generated depcruise Config
+
+**Impact: HIGH**
+
+Custom graph output should extend generated dependency-cruiser config, not replace it, to preserve repository-specific resolver behavior.
+
+**Incorrect: replace baseline resolver**
+
+```js
+const config = { outputType: "mermaid" }
+```
+
+**Correct: merge with baseline**
+
+```js
+const config = {
+  ...baseConfig,
+  outputType: "mermaid",
+  reporterOptions: {
+    ...(baseConfig.reporterOptions ?? {}),
+    dot: { ...(baseConfig.reporterOptions?.dot ?? {}), collapsePattern: "node_modules" }
+  }
+}
+```
+
+Reference: [https://github.com/sverweij/dependency-cruiser](https://github.com/sverweij/dependency-cruiser)
 
 ---
 
 ## 4. Type Graph Generation
 
-### 4.1 Default Type Graph to Exported Declarations with Hard Caps
-Use exported-only types and enforce explicit node/edge limits to preserve
-signal and runtime stability.
+**Impact: HIGH**
 
-### 4.2 Make Type Graph IDs and Ordering Deterministic
-Sort input collections and hash normalized identifiers for stable IDs and clean
-diffs.
+Type graph output must remain bounded and deterministic to stay useful in large repositories.
+
+### 4.1 Keep Type Graph IDs and Ordering Deterministic
+
+**Impact: HIGH**
+
+Sort declaration sources and assign stable node IDs so reruns produce clean diffs and CI can detect real graph changes.
+
+**Incorrect: iteration-order dependent IDs**
+
+```ts
+for (const declaration of declarations) {
+  nodes.push({ id: Math.random().toString(), label: declaration.getName() })
+}
+```
+
+**Correct: stable sort and deterministic IDs**
+
+```ts
+for (const declaration of declarations
+  .slice()
+  .sort((a, b) => a.getSourceFile().getFilePath().localeCompare(b.getSourceFile().getFilePath(), "en-US"))) {
+  const id = declaration.getSourceFile().getFilePath() + "::" + declaration.getName()
+  nodes.push({ id, label: declaration.getName() ?? "anonymous" })
+}
+```
+
+Reference: [https://ts-morph.com/](https://ts-morph.com/)
 
 ---
 
 ## 5. Callgraph Generation
 
-### 5.1 Seed Callgraph from Real Ingress Entrypoints
-Callgraph seeds should represent actual ingress: API routes, server bootstrap,
-or CLI entry files.
+**Impact: HIGH**
 
-### 5.2 Enforce maxDepth and maxEdges in Callgraph Traversal
-Bound traversal depth and edges to avoid unbounded growth in large repos.
+Entrypoint selection is the main signal control for callgraph value and noise.
+
+### 5.1 Seed Callgraph from Real Ingress Entrypoints
+
+**Impact: HIGH**
+
+Choose entrypoints that represent real runtime ingress (API handlers, server bootstrap, CLI main). Arbitrary seeds create noisy, low-value graphs.
+
+**Incorrect: random seed files**
+
+```bash
+npm run arch -- --callgraph --entry "src/**/*.ts"
+```
+
+**Correct: explicit ingress seeds**
+
+```bash
+npm run arch -- --callgraph --entry src/index.ts --entry src/server.ts
+```
+
+Reference: [https://www.typescriptlang.org/](https://www.typescriptlang.org/)
 
 ---
 
 ## 6. CLI Contract
 
-### 6.1 Validate Required CLI Flag Values Explicitly
-Fail fast for missing or malformed flag values (`--config`, `--minify`) to
-avoid confusing downstream errors.
+**Impact: HIGH**
 
-### 6.2 Emit Section Markers and a Clear --help Contract
-Emit typed section markers (`%% graph:*`) and keep one authoritative usage
-string in `--help`.
+Strict argument validation prevents confusing runtime failures and non-deterministic behavior.
+
+### 6.1 Validate CLI Arguments Before Execution
+
+**Impact: HIGH**
+
+Reject missing values and incompatible flags early to avoid accidental graph generation with the wrong mode.
+
+**Incorrect: silent argument swallowing**
+
+```bash
+npm run arch -- --config --deps
+# --deps is consumed as config value
+```
+
+**Correct: explicit validation and failure**
+
+```bash
+npm run arch -- --config --deps
+# exits with: Missing value for --config. Expected a path.
+```
+
+Reference: [https://nodejs.org/docs/latest-v20.x/api/process.html#processargv](https://nodejs.org/docs/latest-v20.x/api/process.html#processargv)
 
 ---
 
 ## 7. Verification and Determinism
 
-### 7.1 Verify the Full Command Matrix, Not Just Default Mode
-Test default, each single graph mode, and key flags. Mode-specific regressions
-are common.
+**Impact: MEDIUM**
 
-### 7.2 Prove Repeatability with Diff-Based Re-Runs
-Run each mode twice and diff outputs to prove deterministic behavior.
+Deterministic outputs allow diff-based review and CI enforcement.
+
+### 7.1 Prove Repeatability with Diff-Based Re-Runs
+
+**Impact: MEDIUM**
+
+Every graph mode should produce stable output across consecutive runs. This is required for trustworthy reviews and CI drift detection.
+
+**Incorrect: single-run confidence only**
+
+```bash
+npm run arch -- --deps
+```
+
+**Correct: repeat and diff**
+
+```bash
+npm run arch -- --deps --minify false > /tmp/deps-1.mmd
+npm run arch -- --deps --minify false > /tmp/deps-2.mmd
+diff /tmp/deps-1.mmd /tmp/deps-2.mmd
+```
+
+Reference: [https://pubs.opengroup.org/onlinepubs/9699919799/utilities/diff.html](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/diff.html)
 
 ---
 
 ## 8. Operational Hygiene
 
-### 8.1 Keep a Living GOTCHA List for Implementation Traps
-Document recurring edge cases (shell globbing, npm preamble output, entrypoint
-explosion) as explicit GOTCHAs.
+**Impact: MEDIUM**
 
-### 8.2 Keep README, CLI Help, and Config Paths in Sync
-Treat stale doc paths as defects; update docs whenever file paths or CLI
-contract changes.
+Keep implementation gotchas explicit so teams do not rediscover the same failure modes.
+
+### 8.1 Keep a Living GOTCHA Log for Recurring Failure Modes
+
+**Impact: MEDIUM**
+
+When setup or output behaves unexpectedly, document the trap in repo docs so future implementations avoid rediscovering it.
+
+**Incorrect: tribal knowledge only**
+
+```text
+Team members repeatedly hit zsh globbing, entrypoint explosion, and npm preamble parsing issues.
+```
+
+**Correct: capture gotchas immediately**
+
+```markdown
+## GOTCHAs
+- zsh expands unquoted globs; quote file patterns.
+- npm command output includes preamble lines; parse graph sections explicitly.
+- broad callgraph entrypoints can exceed max edge budgets.
+```
+
+Reference: [https://docs.github.com/en/get-started/writing-on-github](https://docs.github.com/en/get-started/writing-on-github)
 
 ---
 
 ## References
 
-- dependency-cruiser: https://github.com/sverweij/dependency-cruiser
-- ts-morph docs: https://ts-morph.com/
-- fast-glob docs: https://github.com/mrmlnc/fast-glob
-- TypeScript TSConfig reference: https://www.typescriptlang.org/tsconfig/
+1. [https://github.com/sverweij/dependency-cruiser](https://github.com/sverweij/dependency-cruiser)
+2. [https://ts-morph.com/](https://ts-morph.com/)
+3. [https://github.com/mrmlnc/fast-glob](https://github.com/mrmlnc/fast-glob)
+4. [https://www.typescriptlang.org/tsconfig/](https://www.typescriptlang.org/tsconfig/)

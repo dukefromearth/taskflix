@@ -1,27 +1,30 @@
 ---
-title: Make Type Graph IDs and Ordering Deterministic
+title: Keep Type Graph IDs and Ordering Deterministic
 impact: HIGH
-impactDescription: enables reliable diffs and repeatable AI workflows
-tags: types, determinism, hashing
+tags: types, ts-morph, determinism
 ---
 
-## Make Type Graph IDs and Ordering Deterministic
+## Keep Type Graph IDs and Ordering Deterministic
 
-Sort declarations and edges deterministically, and generate stable node IDs from
-normalized identifiers (path + symbol/kind). Non-determinism breaks review
-confidence.
+Sort declaration sources and assign stable node IDs so reruns produce clean diffs and CI can detect real graph changes.
 
-**Incorrect (iteration-order IDs):**
+**Incorrect (iteration-order dependent IDs):**
 
-```js
-const id = `type_${Date.now()}_${Math.random()}`
+```ts
+for (const declaration of declarations) {
+  nodes.push({ id: Math.random().toString(), label: declaration.getName() })
+}
 ```
 
-**Correct (stable hash IDs + sorted traversal):**
+**Correct (stable sort and deterministic IDs):**
 
-```js
-const id = hashId("type", `${relPath}:${kind}:${name}`)
-const sorted = [...items].sort((a, b) => key(a).localeCompare(key(b)))
+```ts
+for (const declaration of declarations
+  .slice()
+  .sort((a, b) => a.getSourceFile().getFilePath().localeCompare(b.getSourceFile().getFilePath(), "en-US"))) {
+  const id = declaration.getSourceFile().getFilePath() + "::" + declaration.getName()
+  nodes.push({ id, label: declaration.getName() ?? "anonymous" })
+}
 ```
 
-Reference: [ts-morph type APIs](https://ts-morph.com/details/types)
+Reference: [ts-morph docs](https://ts-morph.com/)

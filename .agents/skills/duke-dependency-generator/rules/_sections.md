@@ -1,54 +1,45 @@
 # Sections
 
-This file defines all sections, their ordering, impact levels, and descriptions.
-The section ID (in parentheses) is the filename prefix used to group rules.
+This file defines section ordering, impact, and rule prefixes.
 
 ---
 
 ## 1. Bootstrap and Toolchain (bootstrap)
 
 **Impact:** CRITICAL
-**Description:** Establishes the required toolchain and initialization sequence.
-Without this, later graph tooling is brittle or misleading.
+**Description:** Installation and initialization mistakes are the most common cause of failed architecture workflows.
 
 ## 2. Scope and Project Model (scope)
 
 **Impact:** CRITICAL
-**Description:** Defines which files and project model are analyzed. Incorrect
-scope is the most common source of noisy or incomplete graphs.
+**Description:** Graph quality depends on accurate include/exclude scope and a dedicated analysis TS project.
 
 ## 3. Dependency Graph Generation (deps)
 
 **Impact:** HIGH
-**Description:** Rules for producing accurate dependency structure in Mermaid,
-including compatibility with repository-level dependency-cruiser config.
+**Description:** Dependency graph customization must preserve repository-specific resolver behavior.
 
 ## 4. Type Graph Generation (types)
 
 **Impact:** HIGH
-**Description:** Rules for extracting useful type relationships while preserving
-signal over noise and deterministic output.
+**Description:** Type graph output must remain bounded and deterministic to stay useful in large repositories.
 
 ## 5. Callgraph Generation (callgraph)
 
 **Impact:** HIGH
-**Description:** Rules for entrypoint-driven static callgraph traversal and
-controlled output growth.
+**Description:** Entrypoint selection is the main signal control for callgraph value and noise.
 
 ## 6. CLI Contract (cli)
 
 **Impact:** HIGH
-**Description:** Defines predictable command behavior, clear failure modes, and
-usable output contracts for humans and agents.
+**Description:** Strict argument validation prevents confusing runtime failures and non-deterministic behavior.
 
 ## 7. Verification and Determinism (verify)
 
 **Impact:** MEDIUM
-**Description:** Ensures output is reproducible and command behavior is validated
-across graph modes.
+**Description:** Deterministic outputs allow diff-based review and CI enforcement.
 
 ## 8. Operational Hygiene (ops)
 
 **Impact:** MEDIUM
-**Description:** Keeps docs, gotchas, and implementation behavior aligned over
-long-term maintenance.
+**Description:** Keep implementation gotchas explicit so teams do not rediscover the same failure modes.

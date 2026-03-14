@@ -1,35 +1,25 @@
 ---
-title: Validate Required CLI Flag Values Explicitly
+title: Validate CLI Arguments Before Execution
 impact: HIGH
-impactDescription: prevents flag swallowing and confusing ENOENT errors
-tags: cli, validation, reliability
+tags: cli, validation, ergonomics
 ---
 
-## Validate Required CLI Flag Values Explicitly
+## Validate CLI Arguments Before Execution
 
-For flags that require values (`--config`, `--minify`), fail with explicit
-messages when values are missing or malformed.
+Reject missing values and incompatible flags early to avoid accidental graph generation with the wrong mode.
 
-**Incorrect (accepts next flag as value):**
+**Incorrect (silent argument swallowing):**
 
-```js
-if (arg === "--config") {
-  configPath = argv[i + 1] ?? configPath
-}
+```bash
+npm run arch -- --config --deps
+# --deps is consumed as config value
 ```
 
-**Correct (strict value checks):**
+**Correct (explicit validation and failure):**
 
-```js
-if (arg === "--config") {
-  const rawValue = argv[i + 1]
-  if (!rawValue || rawValue.startsWith("--")) {
-    throw new Error("Missing value for --config. Expected a config path.")
-  }
-  configPath = rawValue
-}
+```bash
+npm run arch -- --config --deps
+# exits with: Missing value for --config. Expected a path.
 ```
 
-`GOTCHA: Without this check, '--config --deps' often fails as ENOENT on '--deps'.`
-
-Reference: [Node CLI argument patterns](https://nodejs.org/api/process.html#processargv)
+Reference: [Node.js process args](https://nodejs.org/docs/latest-v20.x/api/process.html#processargv)

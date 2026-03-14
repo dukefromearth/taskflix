@@ -48,27 +48,37 @@ export class ItemRepository {
   }
 
   async listTimelinePlannedIdsInWindow(input: TimelineProjectScope & { windowStart: number; windowEnd: number }): Promise<string[]> {
-    const plannedAt = sql<number>`coalesce(items.scheduled_at, items.due_at)`;
-    let query = this.db
+    let scheduledQuery = this.db
       .selectFrom('items')
       .select('id')
       .where('deleted_at', 'is', null)
-      .where(plannedAt, 'is not', null)
-      .where(plannedAt, '>=', input.windowStart)
-      .where(plannedAt, '<', input.windowEnd);
+      .where('scheduled_at', '>=', input.windowStart)
+      .where('scheduled_at', '<', input.windowEnd);
+
+    let dueQuery = this.db
+      .selectFrom('items')
+      .select('id')
+      .where('deleted_at', 'is', null)
+      .where('scheduled_at', 'is', null)
+      .where('due_at', '>=', input.windowStart)
+      .where('due_at', '<', input.windowEnd);
 
     if (input.projectIds.length > 0) {
-      query = input.includeUnprojected
-        ? query.where((eb) => eb.or([eb('project_id', 'in', input.projectIds), eb('project_id', 'is', null)]))
-        : query.where('project_id', 'in', input.projectIds);
+      scheduledQuery = input.includeUnprojected
+        ? scheduledQuery.where((eb) => eb.or([eb('project_id', 'in', input.projectIds), eb('project_id', 'is', null)]))
+        : scheduledQuery.where('project_id', 'in', input.projectIds);
+      dueQuery = input.includeUnprojected
+        ? dueQuery.where((eb) => eb.or([eb('project_id', 'in', input.projectIds), eb('project_id', 'is', null)]))
+        : dueQuery.where('project_id', 'in', input.projectIds);
     } else if (input.includeUnprojected) {
-      query = query.where('project_id', 'is', null);
+      scheduledQuery = scheduledQuery.where('project_id', 'is', null);
+      dueQuery = dueQuery.where('project_id', 'is', null);
     } else {
       return [];
     }
 
-    const rows = await query.execute();
-    return rows.map((row) => row.id);
+    const [scheduledRows, dueRows] = await Promise.all([scheduledQuery.execute(), dueQuery.execute()]);
+    return [...new Set([...scheduledRows.map((row) => row.id), ...dueRows.map((row) => row.id)])];
   }
 
   async countTimelinePlanByBucket(input: TimelineProjectScope & {
@@ -77,33 +87,45 @@ export class ItemRepository {
     bucketSizeMs: number;
     bucketCount: number;
   }): Promise<Map<number, number>> {
-    const plannedAt = sql<number>`coalesce(items.scheduled_at, items.due_at)`;
-    const bucketIndex = sql<number>`cast(((${plannedAt} - ${input.windowStart}) / ${input.bucketSizeMs}) as integer)`;
+    const scheduledBucketIndex = sql<number>`cast(((items.scheduled_at - ${input.windowStart}) / ${input.bucketSizeMs}) as integer)`;
+    const dueBucketIndex = sql<number>`cast(((items.due_at - ${input.windowStart}) / ${input.bucketSizeMs}) as integer)`;
 
-    let query = this.db
+    let scheduledQuery = this.db
       .selectFrom('items')
-      .select(({ fn }) => [bucketIndex.as('bucket_index'), fn.count<number>('id').as('count')])
+      .select(({ fn }) => [scheduledBucketIndex.as('bucket_index'), fn.count<number>('id').as('count')])
       .where('deleted_at', 'is', null)
-      .where(plannedAt, 'is not', null)
-      .where(plannedAt, '>=', input.windowStart)
-      .where(plannedAt, '<', input.windowEnd)
-      .groupBy(bucketIndex);
+      .where('scheduled_at', '>=', input.windowStart)
+      .where('scheduled_at', '<', input.windowEnd)
+      .groupBy(scheduledBucketIndex);
+
+    let dueQuery = this.db
+      .selectFrom('items')
+      .select(({ fn }) => [dueBucketIndex.as('bucket_index'), fn.count<number>('id').as('count')])
+      .where('deleted_at', 'is', null)
+      .where('scheduled_at', 'is', null)
+      .where('due_at', '>=', input.windowStart)
+      .where('due_at', '<', input.windowEnd)
+      .groupBy(dueBucketIndex);
 
     if (input.projectIds.length > 0) {
-      query = input.includeUnprojected
-        ? query.where((eb) => eb.or([eb('project_id', 'in', input.projectIds), eb('project_id', 'is', null)]))
-        : query.where('project_id', 'in', input.projectIds);
+      scheduledQuery = input.includeUnprojected
+        ? scheduledQuery.where((eb) => eb.or([eb('project_id', 'in', input.projectIds), eb('project_id', 'is', null)]))
+        : scheduledQuery.where('project_id', 'in', input.projectIds);
+      dueQuery = input.includeUnprojected
+        ? dueQuery.where((eb) => eb.or([eb('project_id', 'in', input.projectIds), eb('project_id', 'is', null)]))
+        : dueQuery.where('project_id', 'in', input.projectIds);
     } else if (input.includeUnprojected) {
-      query = query.where('project_id', 'is', null);
+      scheduledQuery = scheduledQuery.where('project_id', 'is', null);
+      dueQuery = dueQuery.where('project_id', 'is', null);
     } else {
       return new Map();
     }
 
-    const rows = await query.execute();
+    const [scheduledRows, dueRows] = await Promise.all([scheduledQuery.execute(), dueQuery.execute()]);
     const output = new Map<number, number>();
-    for (const row of rows) {
+    for (const row of [...scheduledRows, ...dueRows]) {
       if (row.bucket_index < 0 || row.bucket_index >= input.bucketCount) continue;
-      output.set(row.bucket_index, row.count);
+      output.set(row.bucket_index, (output.get(row.bucket_index) ?? 0) + row.count);
     }
     return output;
   }
@@ -225,57 +247,10 @@ export class ItemRepository {
     return row?.count ?? 0;
   }
 
-  async listTimelinePlannedInWindow(input: TimelineProjectScope & { windowStart: number; windowEnd: number }): Promise<Item[]> {
+  async countTimelineInterruptionsInWindow(input: TimelineProjectScope & { windowStart: number; windowEnd: number }): Promise<number> {
     let query = this.db
       .selectFrom('items')
-      .selectAll()
-      .where('deleted_at', 'is', null)
-      .where((eb) =>
-        eb.or([
-          eb.and([eb('scheduled_at', '>=', input.windowStart), eb('scheduled_at', '<=', input.windowEnd)]),
-          eb.and([eb('due_at', '>=', input.windowStart), eb('due_at', '<=', input.windowEnd)])
-        ])
-      );
-
-    if (input.projectIds.length > 0) {
-      query = input.includeUnprojected
-        ? query.where((eb) => eb.or([eb('project_id', 'in', input.projectIds), eb('project_id', 'is', null)]))
-        : query.where('project_id', 'in', input.projectIds);
-    } else if (input.includeUnprojected) {
-      query = query.where('project_id', 'is', null);
-    } else {
-      return [];
-    }
-
-    return (await query.execute()).map(toItem);
-  }
-
-  async listTimelineOpenDueBefore(input: TimelineProjectScope & { dueBefore: number }): Promise<Item[]> {
-    let query = this.db
-      .selectFrom('items')
-      .selectAll()
-      .where('deleted_at', 'is', null)
-      .where('due_at', 'is not', null)
-      .where('due_at', '<=', input.dueBefore)
-      .where('status', 'in', OPEN_ITEM_STATUSES);
-
-    if (input.projectIds.length > 0) {
-      query = input.includeUnprojected
-        ? query.where((eb) => eb.or([eb('project_id', 'in', input.projectIds), eb('project_id', 'is', null)]))
-        : query.where('project_id', 'in', input.projectIds);
-    } else if (input.includeUnprojected) {
-      query = query.where('project_id', 'is', null);
-    } else {
-      return [];
-    }
-
-    return (await query.execute()).map(toItem);
-  }
-
-  async listTimelineInterruptionsInWindow(input: TimelineProjectScope & { windowStart: number; windowEnd: number }): Promise<Item[]> {
-    let query = this.db
-      .selectFrom('items')
-      .selectAll()
+      .select(({ fn }) => fn.count<number>('id').as('count'))
       .where('deleted_at', 'is', null)
       .where('is_interruption', '=', 1)
       .where('created_at', '>=', input.windowStart)
@@ -288,10 +263,11 @@ export class ItemRepository {
     } else if (input.includeUnprojected) {
       query = query.where('project_id', 'is', null);
     } else {
-      return [];
+      return 0;
     }
 
-    return (await query.execute()).map(toItem);
+    const row = await query.executeTakeFirst();
+    return row?.count ?? 0;
   }
 
   async nextOrderKey(projectId?: string, parentItemId?: string): Promise<string> {

@@ -25,12 +25,13 @@ export class EventRepository {
     return rows.map(toEvent);
   }
 
-  async listTimelineInWindow(input: {
+  async listTimelineRecentEventsInBucket(input: {
     windowStart: number;
     windowEnd: number;
     eventTypes?: string[];
     projectIds: string[];
     includeUnprojected: boolean;
+    limit: number;
   }): Promise<ItemEvent[]> {
     let query = this.db
       .selectFrom('item_events')
@@ -44,7 +45,8 @@ export class EventRepository {
       .where('items.deleted_at', 'is', null)
       .where('item_events.occurred_at', '>=', input.windowStart)
       .where('item_events.occurred_at', '<=', input.windowEnd)
-      .orderBy('item_events.occurred_at', 'desc');
+      .orderBy('item_events.occurred_at', 'desc')
+      .limit(input.limit);
 
     if (input.eventTypes && input.eventTypes.length > 0) {
       query = query.where('item_events.event_type', 'in', input.eventTypes);
@@ -73,20 +75,22 @@ export class EventRepository {
     );
   }
 
-  async listTimelineItemIdsInWindow(input: {
+  async listTimelineDistinctRealityItemIdsInBucket(input: {
     windowStart: number;
     windowEnd: number;
     eventTypes?: string[];
     projectIds: string[];
     includeUnprojected: boolean;
+    limit?: number;
   }): Promise<string[]> {
     let query = this.db
       .selectFrom('item_events')
       .innerJoin('items', 'items.id', 'item_events.item_id')
       .select('item_events.item_id as item_id')
+      .distinct()
       .where('items.deleted_at', 'is', null)
       .where('item_events.occurred_at', '>=', input.windowStart)
-      .where('item_events.occurred_at', '<', input.windowEnd);
+      .where('item_events.occurred_at', '<=', input.windowEnd);
 
     if (input.eventTypes && input.eventTypes.length > 0) {
       query = query.where('item_events.event_type', 'in', input.eventTypes);
@@ -102,8 +106,75 @@ export class EventRepository {
       return [];
     }
 
+    if (input.limit !== undefined && input.limit > 0) {
+      query = query.limit(input.limit);
+    }
+
     const rows = await query.execute();
     return rows.map((row) => row.item_id);
+  }
+
+  async countTimelineEventsInWindow(input: {
+    windowStart: number;
+    windowEnd: number;
+    eventTypes?: string[];
+    projectIds: string[];
+    includeUnprojected: boolean;
+  }): Promise<number> {
+    let query = this.db
+      .selectFrom('item_events')
+      .innerJoin('items', 'items.id', 'item_events.item_id')
+      .select(({ fn }) => fn.count<number>('item_events.id').as('count'))
+      .where('items.deleted_at', 'is', null)
+      .where('item_events.occurred_at', '>=', input.windowStart)
+      .where('item_events.occurred_at', '<=', input.windowEnd);
+
+    if (input.eventTypes && input.eventTypes.length > 0) {
+      query = query.where('item_events.event_type', 'in', input.eventTypes);
+    }
+
+    if (input.projectIds.length > 0) {
+      query = input.includeUnprojected
+        ? query.where((eb) => eb.or([eb('items.project_id', 'in', input.projectIds), eb('items.project_id', 'is', null)]))
+        : query.where('items.project_id', 'in', input.projectIds);
+    } else if (input.includeUnprojected) {
+      query = query.where('items.project_id', 'is', null);
+    } else {
+      return 0;
+    }
+
+    const row = await query.executeTakeFirst();
+    return row?.count ?? 0;
+  }
+
+  async countTimelineInterruptionCreatedEventsInBucket(input: {
+    windowStart: number;
+    windowEnd: number;
+    projectIds: string[];
+    includeUnprojected: boolean;
+  }): Promise<number> {
+    let query = this.db
+      .selectFrom('item_events')
+      .innerJoin('items', 'items.id', 'item_events.item_id')
+      .select(({ fn }) => fn.count<number>('item_events.id').as('count'))
+      .where('items.deleted_at', 'is', null)
+      .where('items.is_interruption', '=', 1)
+      .where('item_events.event_type', '=', 'item.created')
+      .where('item_events.occurred_at', '>=', input.windowStart)
+      .where('item_events.occurred_at', '<=', input.windowEnd);
+
+    if (input.projectIds.length > 0) {
+      query = input.includeUnprojected
+        ? query.where((eb) => eb.or([eb('items.project_id', 'in', input.projectIds), eb('items.project_id', 'is', null)]))
+        : query.where('items.project_id', 'in', input.projectIds);
+    } else if (input.includeUnprojected) {
+      query = query.where('items.project_id', 'is', null);
+    } else {
+      return 0;
+    }
+
+    const row = await query.executeTakeFirst();
+    return row?.count ?? 0;
   }
 
   async countTimelineByBucket(input: {

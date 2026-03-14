@@ -1,27 +1,25 @@
 ---
 title: Prove Repeatability with Diff-Based Re-Runs
 impact: MEDIUM
-impactDescription: validates determinism claims with evidence
-tags: verify, determinism, diffs
+tags: verify, determinism, ci
 ---
 
 ## Prove Repeatability with Diff-Based Re-Runs
 
-Run each graph mode twice and diff outputs. Determinism should be tested, not
-assumed.
+Every graph mode should produce stable output across consecutive runs. This is required for trustworthy reviews and CI drift detection.
 
-**Incorrect (no repeatability check):**
-
-```bash
-npm run arch -- --types > /tmp/types.mmd
-```
-
-**Correct (paired run + diff):**
+**Incorrect (single-run confidence only):**
 
 ```bash
-npm run arch -- --types > /tmp/types-run1.mmd
-npm run arch -- --types > /tmp/types-run2.mmd
-diff -u /tmp/types-run1.mmd /tmp/types-run2.mmd
+npm run arch -- --deps
 ```
 
-Reference: [GNU diffutils](https://www.gnu.org/software/diffutils/manual/diffutils.html)
+**Correct (repeat and diff):**
+
+```bash
+npm run arch -- --deps --minify false > /tmp/deps-1.mmd
+npm run arch -- --deps --minify false > /tmp/deps-2.mmd
+diff /tmp/deps-1.mmd /tmp/deps-2.mmd
+```
+
+Reference: [POSIX diff](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/diff.html)

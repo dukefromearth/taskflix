@@ -176,13 +176,97 @@ describe('timeline repository aggregation', () => {
     expect(createdEventCounts.get(2)).toBe(1);
   });
 
-  it('uses timeline indexes for critical query shapes', async () => {
+  it('serves summary projections without full-row timeline scans', async () => {
+    const { project, itemRepo, eventRepo } = await setup();
+    const windowStart = Date.UTC(2026, 2, 15, 9, 0, 0, 0);
+    const windowEnd = windowStart + 3 * HOUR_MS;
+
+    const interruption = makeItem({
+      projectId: project.id,
+      title: 'Interrupt',
+      status: 'active',
+      createdAt: windowStart + 30 * 60 * 1000,
+      isInterruption: true
+    });
+    const planned = makeItem({
+      projectId: project.id,
+      title: 'Planned',
+      status: 'active',
+      createdAt: windowStart - HOUR_MS,
+      dueAt: windowStart + HOUR_MS
+    });
+    const realityOnly = makeItem({
+      projectId: project.id,
+      title: 'Reality',
+      status: 'active',
+      createdAt: windowStart - HOUR_MS
+    });
+
+    for (const item of [interruption, planned, realityOnly]) {
+      await itemRepo.insert(item);
+    }
+
+    await eventRepo.insert({
+      id: ulid(),
+      itemId: interruption.id,
+      commandId: ulid(),
+      eventType: 'item.created',
+      payloadJson: {},
+      occurredAt: windowStart + 30 * 60 * 1000
+    });
+    await eventRepo.insert({
+      id: ulid(),
+      itemId: realityOnly.id,
+      commandId: ulid(),
+      eventType: 'item.updated',
+      payloadJson: {},
+      occurredAt: windowStart + 80 * 60 * 1000
+    });
+    await eventRepo.insert({
+      id: ulid(),
+      itemId: planned.id,
+      commandId: ulid(),
+      eventType: 'item.completed',
+      payloadJson: {},
+      occurredAt: windowStart + 100 * 60 * 1000
+    });
+
+    const scope = { projectIds: [project.id], includeUnprojected: false };
+
+    const [recentEvents, distinctItemIds, interruptionCreatedCount] = await Promise.all([
+      eventRepo.listTimelineRecentEventsInBucket({
+        ...scope,
+        windowStart,
+        windowEnd,
+        eventTypes: ['item.created', 'item.updated', 'item.completed'],
+        limit: 2
+      }),
+      eventRepo.listTimelineDistinctRealityItemIdsInBucket({
+        ...scope,
+        windowStart,
+        windowEnd,
+        eventTypes: ['item.created', 'item.updated', 'item.completed']
+      }),
+      eventRepo.countTimelineInterruptionCreatedEventsInBucket({
+        ...scope,
+        windowStart,
+        windowEnd
+      })
+    ]);
+
+    expect(recentEvents).toHaveLength(2);
+    expect(recentEvents[0]!.occurredAt).toBeGreaterThan(recentEvents[1]!.occurredAt);
+    expect(new Set(distinctItemIds)).toEqual(new Set([interruption.id, realityOnly.id, planned.id]));
+    expect(interruptionCreatedCount).toBe(1);
+  });
+
+  it('uses expected indexes for repository-shaped timeline queries', async () => {
     const { project } = await setup();
     const sqlite = activeDb!.runtime.sqlite;
     const windowStart = Date.UTC(2026, 2, 14, 0, 0, 0, 0);
     const windowEnd = windowStart + 4 * HOUR_MS;
 
-    const plan = sqlite
+    const plannedScheduled = sqlite
       .prepare(
         `
           EXPLAIN QUERY PLAN
@@ -196,11 +280,26 @@ describe('timeline repository aggregation', () => {
       )
       .all(project.id, windowStart, windowEnd) as Array<{ detail: string }>;
 
-    const due = sqlite
+    const plannedDue = sqlite
       .prepare(
         `
           EXPLAIN QUERY PLAN
           SELECT id
+          FROM items
+          WHERE deleted_at IS NULL
+            AND project_id = ?
+            AND scheduled_at IS NULL
+            AND due_at >= ?
+            AND due_at < ?
+        `
+      )
+      .all(project.id, windowStart, windowEnd) as Array<{ detail: string }>;
+
+    const dueOpen = sqlite
+      .prepare(
+        `
+          EXPLAIN QUERY PLAN
+          SELECT count(id)
           FROM items
           WHERE deleted_at IS NULL
             AND project_id = ?
@@ -210,6 +309,21 @@ describe('timeline repository aggregation', () => {
         `
       )
       .all(project.id, windowEnd) as Array<{ detail: string }>;
+
+    const interruptions = sqlite
+      .prepare(
+        `
+          EXPLAIN QUERY PLAN
+          SELECT count(id)
+          FROM items
+          WHERE deleted_at IS NULL
+            AND project_id = ?
+            AND is_interruption = 1
+            AND created_at >= ?
+            AND created_at <= ?
+        `
+      )
+      .all(project.id, windowStart, windowEnd) as Array<{ detail: string }>;
 
     const events = sqlite
       .prepare(
@@ -226,8 +340,24 @@ describe('timeline repository aggregation', () => {
       )
       .all(windowStart, windowEnd, project.id) as Array<{ detail: string }>;
 
-    expect(plan.some((row) => row.detail.includes('idx_items_timeline_plan_scheduled'))).toBe(true);
-    expect(due.some((row) => row.detail.includes('idx_items_timeline_due_open'))).toBe(true);
-    expect(events.some((row) => row.detail.includes('idx_item_events_timeline_type_window_item'))).toBe(true);
+    expect(plannedScheduled.some((row) => row.detail.includes('idx_items_project_id'))).toBe(true);
+    expect(plannedDue.some((row) => row.detail.includes('idx_items_project_id'))).toBe(true);
+    expect(dueOpen.some((row) => row.detail.includes('idx_items_project_id'))).toBe(true);
+    expect(interruptions.some((row) => row.detail.includes('idx_items_project_id'))).toBe(true);
+    expect(events.some((row) => row.detail.includes('idx_item_events_item_id_occurred_at'))).toBe(true);
+
+    const allIndexes = sqlite
+      .prepare(
+        `
+          SELECT name
+          FROM sqlite_master
+          WHERE type = 'index'
+          ORDER BY name
+        `
+      )
+      .all() as Array<{ name: string }>;
+    const names = new Set(allIndexes.map((row) => row.name));
+    expect(names.has('idx_items_project_id')).toBe(true);
+    expect(names.has('idx_item_events_item_id_occurred_at')).toBe(true);
   });
 });

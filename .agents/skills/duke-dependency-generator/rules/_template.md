@@ -1,31 +1,26 @@
 ---
 title: Rule Title Here
 impact: MEDIUM
-impactDescription: Optional description of impact (e.g., "prevents invalid CLI behavior")
+impactDescription: Optional impact detail
 tags: tag1, tag2
 ---
 
 ## Rule Title Here
 
-**Impact: MEDIUM (optional impact description)**
+**Impact: MEDIUM**
 
-Brief explanation of the rule and why it matters. Keep this explicit and
-implementation-facing.
+Brief explanation of the rule and why it matters.
 
-**Incorrect (what fails and why):**
-
-```bash
-# Bad setup, command, or implementation snippet
-```
-
-**Correct (what to do instead):**
+**Incorrect (what fails):**
 
 ```bash
-# Good setup, command, or implementation snippet
+# bad command or implementation
 ```
 
-If useful, add one GOTCHA line:
+**Correct (what works):**
 
-`GOTCHA: <one sentence about a recurring trap>`
+```bash
+# improved command or implementation
+```
 
-Reference: [Link to primary documentation](https://example.com)
+Reference: [Link](https://example.com)

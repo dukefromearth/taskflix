@@ -1,0 +1,2 @@
+-- Intentionally left blank.
+-- We do not recreate removed timeline-only indexes.
