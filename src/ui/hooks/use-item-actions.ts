@@ -3,6 +3,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { ItemStatus } from '@/domain/types';
 import { api } from '@/ui/api/client';
+import { invalidateTimelineCaches } from '@/ui/query/invalidate-timeline';
 import { queryKeys } from '@/ui/query/keys';
 
 export const useItemActions = () => {
@@ -14,10 +15,10 @@ export const useItemActions = () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.upcoming }),
       queryClient.invalidateQueries({ queryKey: queryKeys.inbox }),
       queryClient.invalidateQueries({ queryKey: queryKeys.history }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.timeline }),
       queryClient.invalidateQueries({ queryKey: queryKeys.items }),
       queryClient.invalidateQueries({ queryKey: ['search'] })
     ]);
+    await invalidateTimelineCaches(queryClient);
     if (itemId) {
       await queryClient.invalidateQueries({ queryKey: queryKeys.itemDetail(itemId) });
     }

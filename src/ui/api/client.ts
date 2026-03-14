@@ -12,7 +12,8 @@ import type {
   SavedView,
   SearchResultDto,
   TimelineMode,
-  TimelineViewDto,
+  TimelineStructureDto,
+  TimelineSummaryDto,
   TimelineZoom,
   TodayViewDto,
   UpcomingViewDto
@@ -79,23 +80,41 @@ export const api = {
   getInboxView: () => request<InboxViewDto>('/api/views/inbox'),
   getHistoryView: () => request<HistoryViewDto>('/api/views/history'),
   getProjectView: (projectId: string) => request<ProjectViewDto>(`/api/views/project?projectId=${encodeURIComponent(projectId)}`),
-  getTimelineView: (params?: {
+  getTimelineStructure: (params?: {
     zoom?: TimelineZoom;
     mode?: TimelineMode;
     windowStart?: number;
     windowEnd?: number;
-    playheadTs?: number;
     projectIds?: string[];
-  }) => {
+  }, options?: Pick<RequestOptions, 'signal'>) => {
     const query = new URLSearchParams();
     if (params?.zoom) query.set('zoom', params.zoom);
     if (params?.mode) query.set('mode', params.mode);
     if (params?.windowStart !== undefined) query.set('windowStart', String(params.windowStart));
     if (params?.windowEnd !== undefined) query.set('windowEnd', String(params.windowEnd));
-    if (params?.playheadTs !== undefined) query.set('playheadTs', String(params.playheadTs));
     if (params?.projectIds && params.projectIds.length > 0) query.set('projectIds', params.projectIds.join(','));
     const suffix = query.toString();
-    return request<TimelineViewDto>(`/api/timeline${suffix ? `?${suffix}` : ''}`);
+    return request<TimelineStructureDto>(`/api/timeline/structure${suffix ? `?${suffix}` : ''}`, { signal: options?.signal });
+  },
+  getTimelineSummary: (params?: {
+    zoom?: TimelineZoom;
+    windowStart?: number;
+    windowEnd?: number;
+    playheadTs?: number;
+    bucketStart?: number;
+    bucketEnd?: number;
+    projectIds?: string[];
+  }, options?: Pick<RequestOptions, 'signal'>) => {
+    const query = new URLSearchParams();
+    if (params?.zoom) query.set('zoom', params.zoom);
+    if (params?.windowStart !== undefined) query.set('windowStart', String(params.windowStart));
+    if (params?.windowEnd !== undefined) query.set('windowEnd', String(params.windowEnd));
+    if (params?.playheadTs !== undefined) query.set('playheadTs', String(params.playheadTs));
+    if (params?.bucketStart !== undefined) query.set('bucketStart', String(params.bucketStart));
+    if (params?.bucketEnd !== undefined) query.set('bucketEnd', String(params.bucketEnd));
+    if (params?.projectIds && params.projectIds.length > 0) query.set('projectIds', params.projectIds.join(','));
+    const suffix = query.toString();
+    return request<TimelineSummaryDto>(`/api/timeline/summary${suffix ? `?${suffix}` : ''}`, { signal: options?.signal });
   },
 
   listItems: () => request<Item[]>('/api/items'),

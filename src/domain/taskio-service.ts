@@ -3,21 +3,14 @@ import type { Kysely } from 'kysely';
 import { assert, DomainError } from './errors';
 import { canTransitionStatus, isTerminalStatus } from './status';
 import { normalizeTagName, toTagDisplayName } from './tag';
-import {
-  buildTimelineBuckets,
-  clampPlayhead,
-  daysFromNowLocal,
-  getDefaultTimelineWindow,
-  isSameLocalDay,
-  timelineBucketIndexForTs
-} from './time';
+import { daysFromNowLocal, isSameLocalDay } from './time';
+import { TimelineReadModel, type TimelineStructureInput, type TimelineSummaryInput } from './timeline-read-model';
 import type {
   Attachment,
   AttachmentContent,
   HistoryViewDto,
   InboxViewDto,
   Item,
-  ItemEvent,
   ItemDetailDto,
   ItemKind,
   ItemRowDto,
@@ -34,9 +27,8 @@ import type {
   SourceKind,
   Tag,
   TextExtractionStatus,
-  TimelineMode,
-  TimelineViewDto,
-  TimelineZoom,
+  TimelineStructureDto,
+  TimelineSummaryDto,
   TodayViewDto,
   UpcomingViewDto,
   UserPreference
@@ -99,16 +91,6 @@ type TaskioServiceOptions = {
   timezone?: string;
 };
 
-type TimelineViewInput = {
-  zoom?: TimelineZoom;
-  mode?: TimelineMode;
-  windowStart?: number;
-  windowEnd?: number;
-  playheadTs?: number;
-  projectIds?: string[];
-  now?: number;
-};
-
 const ALLOWED_LINK_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 
 const createRepositories = (db: DbExecutor) => ({
@@ -126,10 +108,18 @@ const createRepositories = (db: DbExecutor) => ({
 export class TaskioService {
   private readonly db: Kysely<DatabaseSchema>;
   private readonly timezone: string;
+  private readonly timelineReadModel: TimelineReadModel;
 
   constructor(options?: TaskioServiceOptions) {
     this.db = options?.db ?? getDatabaseRuntime().db;
     this.timezone = options?.timezone ?? process.env.TASKIO_TIMEZONE ?? 'America/New_York';
+    this.timelineReadModel = new TimelineReadModel({
+      db: this.db,
+      timezone: this.timezone,
+      getUserPreference: () => this.getUserPreference(),
+      rowsForItemIds: (itemIds, now) => this.rowsForItemIds(itemIds, now),
+      logTiming: (operation, startedAt, extra) => this.logTimelineTiming(operation, startedAt, extra)
+    });
   }
 
   async getUserPreference(): Promise<UserPreference> {
@@ -816,214 +806,30 @@ export class TaskioService {
     };
   }
 
-  async getTimelineView(input: TimelineViewInput = {}): Promise<TimelineViewDto> {
-    const preference = await this.getUserPreference();
-    const now = input.now ?? Date.now();
-    const zoom = input.zoom ?? 'week';
-    const mode = input.mode ?? 'dual';
+  async getTimelineStructure(input: TimelineStructureInput = {}): Promise<TimelineStructureDto> {
+    return this.timelineReadModel.getStructure(input);
+  }
 
-    const defaultWindow = getDefaultTimelineWindow(now);
-    let windowStart = input.windowStart ?? defaultWindow.windowStart;
-    let windowEnd = input.windowEnd ?? defaultWindow.windowEnd;
-    if (windowStart > windowEnd) {
-      [windowStart, windowEnd] = [windowEnd, windowStart];
-    }
-    if (windowStart === windowEnd) {
-      windowEnd += 1;
-    }
+  async getTimelineSummary(input: TimelineSummaryInput = {}): Promise<TimelineSummaryDto> {
+    return this.timelineReadModel.getSummary(input);
+  }
 
-    const playheadTs = clampPlayhead(input.playheadTs ?? now, windowStart, windowEnd);
+  private async rowsForItemIds(itemIds: string[], now = Date.now()): Promise<ItemRowDto[]> {
+    const uniqueIds = [...new Set(itemIds)];
+    const items = await createRepositories(this.db).items.listByIds(uniqueIds);
+    return this.rowsForItems(items, now);
+  }
 
-    const repos = createRepositories(this.db);
-    const [allProjects, allItems, allEvents] = await Promise.all([
-      repos.projects.list({ includeArchived: true }),
-      repos.items.listAll(),
-      repos.events.listAll(5_000)
-    ]);
-
-    const defaultProjectIds = allProjects.filter((project) => project.status !== 'archived').map((project) => project.id);
-    const scopedProjectIds = input.projectIds && input.projectIds.length > 0 ? input.projectIds : defaultProjectIds;
-    const scopedProjectSet = new Set(scopedProjectIds);
-    const hasExplicitProjectScope = Boolean(input.projectIds && input.projectIds.length > 0);
-
-    const scopedItems = allItems.filter((item) => {
-      if (!item.projectId) return !hasExplicitProjectScope;
-      return scopedProjectSet.has(item.projectId);
-    });
-
-    const itemById = new Map(scopedItems.map((item) => [item.id, item]));
-    const scopedItemIds = new Set(scopedItems.map((item) => item.id));
-    const scopedRows = await this.rowsForItems(scopedItems, now);
-    const rowById = new Map(scopedRows.map((row) => [row.id, row]));
-
-    const scopedEvents = allEvents.filter(
-      (event) => scopedItemIds.has(event.itemId) && event.occurredAt >= windowStart && event.occurredAt <= windowEnd
-    );
-
-    const baseBuckets = buildTimelineBuckets({
-      zoom,
-      windowStart,
-      windowEnd,
-      timezone: preference.timezone
-    });
-
-    const makeLane = (key: 'plan' | 'reality' | 'overduePressure' | 'interruptions', label: string) => ({
-      key,
-      label,
-      buckets: baseBuckets.map((bucket) => ({
-        start: bucket.start,
-        end: bucket.end,
-        label: bucket.label,
-        count: 0,
-        itemIds: [] as string[],
-        eventIds: [] as string[]
-      }))
-    });
-
-    const planLane = makeLane('plan', 'Plan');
-    const realityLane = makeLane('reality', 'Reality');
-    const overdueLane = makeLane('overduePressure', 'Overdue Pressure');
-    const interruptionLane = makeLane('interruptions', 'Interruptions');
-
-    for (const row of scopedRows) {
-      const ts = row.scheduledAt ?? row.dueAt;
-      if (!ts || ts < windowStart || ts > windowEnd) continue;
-      const index = timelineBucketIndexForTs(baseBuckets, ts);
-      const bucket = planLane.buckets[index];
-      if (!bucket) continue;
-      bucket.count += 1;
-      bucket.itemIds.push(row.id);
-    }
-
-    const realityTypes = new Set([
-      'item.created',
-      'item.updated',
-      'item.statusChanged',
-      'item.scheduled',
-      'item.dueChanged',
-      'item.completed',
-      'item.reopened',
-      'item.moved',
-      'item.reordered'
-    ]);
-
-    for (const event of scopedEvents) {
-      if (!realityTypes.has(event.eventType)) continue;
-      const index = timelineBucketIndexForTs(baseBuckets, event.occurredAt);
-      const bucket = realityLane.buckets[index];
-      if (!bucket) continue;
-      bucket.count += 1;
-      bucket.itemIds.push(event.itemId);
-      bucket.eventIds.push(event.id);
-    }
-
-    for (let i = 0; i < baseBuckets.length; i += 1) {
-      const bucket = baseBuckets[i];
-      if (!bucket) continue;
-
-      const overdueCount = scopedRows.filter((row) => {
-        if (isTerminalStatus(row.status)) return false;
-        if (!row.dueAt) return false;
-        return row.dueAt < bucket.end;
-      }).length;
-      const overdueBucket = overdueLane.buckets[i];
-      const interruptionBucket = interruptionLane.buckets[i];
-      if (!overdueBucket || !interruptionBucket) continue;
-      overdueBucket.count = overdueCount;
-
-      const interruptionFromItems = scopedItems.filter((item) => item.isInterruption && item.createdAt >= bucket.start && item.createdAt < bucket.end);
-      const interruptionFromEvents = scopedEvents.filter((event) => {
-        if (event.occurredAt < bucket.start || event.occurredAt >= bucket.end) return false;
-        const item = itemById.get(event.itemId);
-        return Boolean(item?.isInterruption) && event.eventType === 'item.created';
-      });
-
-      interruptionBucket.count = interruptionFromItems.length + interruptionFromEvents.length;
-      interruptionBucket.itemIds = [...new Set(interruptionFromItems.map((item) => item.id).concat(interruptionFromEvents.map((event) => event.itemId)))];
-      interruptionBucket.eventIds = interruptionFromEvents.map((event) => event.id);
-    }
-
-    const playheadIndex = timelineBucketIndexForTs(baseBuckets, playheadTs);
-    const emptyBucket = { start: windowStart, end: windowEnd, label: '', count: 0, itemIds: [] as string[], eventIds: [] as string[] };
-    const playheadBucket = baseBuckets[playheadIndex] ?? baseBuckets[0] ?? { start: windowStart, end: windowEnd, label: '' };
-    const planAtPlayhead = planLane.buckets[playheadIndex] ?? emptyBucket;
-    const realityAtPlayhead = realityLane.buckets[playheadIndex] ?? emptyBucket;
-    const overdueAtPlayhead = overdueLane.buckets[playheadIndex] ?? emptyBucket;
-    const interruptionAtPlayhead = interruptionLane.buckets[playheadIndex] ?? emptyBucket;
-
-    let topItemIds = [...new Set([...planAtPlayhead.itemIds, ...realityAtPlayhead.itemIds])];
-    if (topItemIds.length === 0) {
-      topItemIds = [
-        ...new Set(
-          planLane.buckets.flatMap((bucket) => bucket.itemIds).concat(realityLane.buckets.flatMap((bucket) => bucket.itemIds))
-        )
-      ].slice(0, 20);
-    }
-
-    const topItems = topItemIds
-      .map((itemId) => rowById.get(itemId))
-      .filter((row): row is ItemRowDto => Boolean(row))
-      .sort((a, b) => {
-        if (a.priority !== b.priority) return b.priority - a.priority;
-        if (a.isOverdue !== b.isOverdue) return a.isOverdue ? -1 : 1;
-        return a.title.localeCompare(b.title);
+  private logTimelineTiming(operation: string, startedAt: number, extra?: Record<string, unknown>): void {
+    if (process.env.NODE_ENV === 'test') return;
+    const elapsedMs = Date.now() - startedAt;
+    console.info(
+      JSON.stringify({
+        operation,
+        elapsedMs,
+        ...extra
       })
-      .slice(0, 12);
-
-    const recentEvents = scopedEvents
-      .filter((event) => event.occurredAt >= playheadBucket.start && event.occurredAt < playheadBucket.end)
-      .sort((a, b) => b.occurredAt - a.occurredAt)
-      .slice(0, 12);
-
-    const moments = [
-      ...planLane.buckets.map((bucket) => ({ ts: bucket.start, label: `Plan · ${bucket.label}`, kind: 'plan' as const, count: bucket.count })),
-      ...realityLane.buckets.map((bucket) => ({
-        ts: bucket.start,
-        label: `Reality · ${bucket.label}`,
-        kind: 'reality' as const,
-        count: bucket.count
-      })),
-      ...overdueLane.buckets.map((bucket) => ({
-        ts: bucket.start,
-        label: `Overdue · ${bucket.label}`,
-        kind: 'overdue' as const,
-        count: bucket.count
-      })),
-      ...interruptionLane.buckets.map((bucket) => ({
-        ts: bucket.start,
-        label: `Interruptions · ${bucket.label}`,
-        kind: 'interruption' as const,
-        count: bucket.count
-      }))
-    ]
-      .filter((moment) => moment.count > 0)
-      .sort((a, b) => b.count - a.count || a.ts - b.ts)
-      .slice(0, 24);
-
-    return {
-      now,
-      timezone: preference.timezone,
-      zoom,
-      mode,
-      windowStart,
-      windowEnd,
-      playheadTs,
-      projectIds: hasExplicitProjectScope ? scopedProjectIds : undefined,
-      lanes: [planLane, realityLane, overdueLane, interruptionLane],
-      moments,
-      summary: {
-        playheadTs,
-        playheadLabel: `${playheadBucket.label}`,
-        counts: {
-          plan: planAtPlayhead.count,
-          reality: realityAtPlayhead.count,
-          overdue: overdueAtPlayhead.count,
-          interruptions: interruptionAtPlayhead.count
-        },
-        topItems,
-        recentEvents
-      }
-    };
+    );
   }
 
   async search(query: string, filter?: QueryFilter): Promise<SearchResultDto[]> {

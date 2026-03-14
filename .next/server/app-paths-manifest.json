@@ -32,7 +32,8 @@
   "/api/saved-views/[savedViewId]/route": "app/api/saved-views/[savedViewId]/route.js",
   "/api/saved-views/route": "app/api/saved-views/route.js",
   "/api/search/route": "app/api/search/route.js",
-  "/api/timeline/route": "app/api/timeline/route.js",
+  "/api/timeline/structure/route": "app/api/timeline/structure/route.js",
+  "/api/timeline/summary/route": "app/api/timeline/summary/route.js",
   "/api/views/[name]/route": "app/api/views/[name]/route.js",
   "/icon.svg/route": "app/icon.svg/route.js"
 }

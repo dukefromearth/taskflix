@@ -1,9 +1,11 @@
 export class DomainError extends Error {
   readonly code: 'validation' | 'conflict' | 'not_found';
+  readonly details?: unknown;
 
-  constructor(code: 'validation' | 'conflict' | 'not_found', message: string) {
+  constructor(code: 'validation' | 'conflict' | 'not_found', message: string, details?: unknown) {
     super(message);
     this.code = code;
+    this.details = details;
   }
 }
 

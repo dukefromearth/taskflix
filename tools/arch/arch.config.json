@@ -1,0 +1,38 @@
+{
+  "project": "./tsconfig.arch.json",
+  "roots": [
+    "src",
+    "app"
+  ],
+  "includeOnly": "^(src|app)/",
+  "exclude": [
+    "(^|/)node_modules/",
+    "(^|/)(dist|build|coverage|out|\\.next|\\.turbo)(/|$)",
+    "(^|/)(test|tests|__tests__|__mocks__|fixtures|e2e)(/|$)",
+    "[.](spec|test)\\.[cm]?[jt]sx?$",
+    "[.]d[.]ts$",
+    "(^|/)generated(/|$)"
+  ],
+  "typegraph": {
+    "exportedOnly": true,
+    "maxNodes": 300,
+    "maxEdges": 1000
+  },
+  "callgraph": {
+    "entrypoints": [
+      "src/index.ts",
+      "app/api/**/*.ts"
+    ],
+    "maxEdges": 500,
+    "maxDepth": 6,
+    "excludeNames": [
+      "^describe$",
+      "^it$",
+      "^test$",
+      "^beforeEach$",
+      "^afterEach$",
+      "^mock",
+      "^vi\\."
+    ]
+  }
+}

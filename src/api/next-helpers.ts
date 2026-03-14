@@ -30,13 +30,13 @@ export const handleRouteError = (error: unknown): NextResponse => {
 
   if (error instanceof DomainError) {
     if (error.code === 'validation') {
-      return NextResponse.json(fail('BAD_REQUEST', error.message), { status: 400 });
+      return NextResponse.json(fail('BAD_REQUEST', error.message, error.details), { status: 400 });
     }
     if (error.code === 'not_found') {
-      return NextResponse.json(fail('NOT_FOUND', error.message), { status: 404 });
+      return NextResponse.json(fail('NOT_FOUND', error.message, error.details), { status: 404 });
     }
     if (error.code === 'conflict') {
-      return NextResponse.json(fail('CONFLICT', error.message), { status: 409 });
+      return NextResponse.json(fail('CONFLICT', error.message, error.details), { status: 409 });
     }
   }
 

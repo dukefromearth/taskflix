@@ -8,6 +8,9 @@
     "build": "next build",
     "dev": "next dev",
     "start": "next start",
+    "integration:prepare-db": "tsx scripts/reset-integration-db.ts",
+    "test:integration": "npm run integration:prepare-db && playwright test",
+    "test:integration:headed": "npm run integration:prepare-db && playwright test --headed --project=chromium",
     "bootstrap:db": "tsx scripts/bootstrap-db.ts",
     "migrate:up": "tsx scripts/migrate.ts up",
     "migrate:down": "tsx scripts/migrate.ts down",
@@ -15,6 +18,7 @@
     "reindex:fts": "tsx scripts/reindex-fts.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "arch": "node tools/arch/arch.mjs",
     "verify": "npm run test && npm run build"
   },
   "dependencies": {
@@ -43,6 +47,10 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.13.11",
+    "dependency-cruiser": "^17.3.9",
+    "@playwright/test": "^1.54.2",
+    "fast-glob": "^3.3.3",
+    "ts-morph": "^27.0.2",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2",
     "vitest": "^3.0.9"

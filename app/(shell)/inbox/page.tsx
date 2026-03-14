@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { api } from '@/ui/api/client';
 import { ItemList } from '@/ui/components/item-list';
 import { useItemActions } from '@/ui/hooks/use-item-actions';
+import { invalidateTimelineCaches } from '@/ui/query/invalidate-timeline';
 import { queryKeys } from '@/ui/query/keys';
 import { useUiStore } from '@/ui/state/ui-store';
 
@@ -29,9 +30,9 @@ export default function InboxPage() {
       queryClient.invalidateQueries({ queryKey: queryKeys.inbox }),
       queryClient.invalidateQueries({ queryKey: queryKeys.today }),
       queryClient.invalidateQueries({ queryKey: queryKeys.upcoming }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.timeline }),
       queryClient.invalidateQueries({ queryKey: queryKeys.items })
     ]);
+    await invalidateTimelineCaches(queryClient);
     if (itemId) {
       await queryClient.invalidateQueries({ queryKey: queryKeys.itemDetail(itemId) });
     }

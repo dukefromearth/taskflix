@@ -55,13 +55,19 @@ export const SearchQuerySchema = z.object({
   includeDone: z.enum(['true', 'false']).optional()
 });
 
-export const TimelineQuerySchema = z.object({
+export const TimelineStructureQuerySchema = z.object({
   zoom: TimelineZoomSchema.optional(),
   mode: TimelineModeSchema.optional(),
   windowStart: z.string().regex(/^\d+$/).optional(),
   windowEnd: z.string().regex(/^\d+$/).optional(),
-  playheadTs: z.string().regex(/^\d+$/).optional(),
   projectIds: z.string().optional()
+});
+
+export const TimelineSummaryQuerySchema = TimelineStructureQuerySchema.extend({
+  mode: z.never().optional(),
+  playheadTs: z.string().regex(/^\d+$/).optional(),
+  bucketStart: z.string().regex(/^\d+$/).optional(),
+  bucketEnd: z.string().regex(/^\d+$/).optional()
 });
 
 export const splitCsv = (value?: string): string[] | undefined => {
@@ -90,11 +96,20 @@ const parseOptionalTimestamp = (value?: string): number | undefined => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
-export const parseTimelineQuery = (query: z.infer<typeof TimelineQuerySchema>) => ({
+export const parseTimelineStructureQuery = (query: z.infer<typeof TimelineStructureQuerySchema>) => ({
   zoom: query.zoom,
   mode: query.mode,
   windowStart: parseOptionalTimestamp(query.windowStart),
   windowEnd: parseOptionalTimestamp(query.windowEnd),
+  projectIds: splitCsv(query.projectIds)
+});
+
+export const parseTimelineSummaryQuery = (query: z.infer<typeof TimelineSummaryQuerySchema>) => ({
+  zoom: query.zoom,
+  windowStart: parseOptionalTimestamp(query.windowStart),
+  windowEnd: parseOptionalTimestamp(query.windowEnd),
   playheadTs: parseOptionalTimestamp(query.playheadTs),
+  bucketStart: parseOptionalTimestamp(query.bucketStart),
+  bucketEnd: parseOptionalTimestamp(query.bucketEnd),
   projectIds: splitCsv(query.projectIds)
 });

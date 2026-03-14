@@ -32,7 +32,8 @@
   "/api/saved-views/[savedViewId]/route": "/api/saved-views/[savedViewId]",
   "/api/saved-views/route": "/api/saved-views",
   "/api/search/route": "/api/search",
-  "/api/timeline/route": "/api/timeline",
+  "/api/timeline/structure/route": "/api/timeline/structure",
+  "/api/timeline/summary/route": "/api/timeline/summary",
   "/api/views/[name]/route": "/api/views/[name]",
   "/icon.svg/route": "/icon.svg"
 }

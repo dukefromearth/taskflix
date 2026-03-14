@@ -3,11 +3,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { type ReactNode, useEffect, useRef } from 'react';
+import { getDefaultTimelineWindow } from '@/domain/time';
 import { api } from '@/ui/api/client';
 import { CommandPalette } from '@/ui/components/command-palette';
 import { DetailPane } from '@/ui/components/detail-pane';
 import { LeftRail } from '@/ui/components/left-rail';
+import { invalidateTimelineCaches } from '@/ui/query/invalidate-timeline';
 import { queryKeys } from '@/ui/query/keys';
+import { timelineNowSummaryQueryOptions } from '@/ui/query/timeline-query-options';
 import { useUiStore } from '@/ui/state/ui-store';
 
 type AppShellProps = {
@@ -25,6 +28,8 @@ export const AppShell = ({ children }: AppShellProps) => {
   const router = useRouter();
   const queryClient = useQueryClient();
   const gSequenceAt = useRef<number | undefined>(undefined);
+  const timelineNowRef = useRef(Date.now());
+  const timelineWindow = getDefaultTimelineWindow(timelineNowRef.current);
 
   const selectedItemId = useUiStore((state) => state.selectedItemId);
   const setSelectedItemId = useUiStore((state) => state.setSelectedItemId);
@@ -43,15 +48,18 @@ export const AppShell = ({ children }: AppShellProps) => {
   const inboxQuery = useQuery({ queryKey: queryKeys.inbox, queryFn: api.getInboxView });
   const historyQuery = useQuery({ queryKey: queryKeys.history, queryFn: api.getHistoryView });
   const timelineQuery = useQuery({
-    queryKey: queryKeys.timelineView({
-      windowStart: 0,
-      windowEnd: 0,
+    queryKey: queryKeys.timelineNowSummary({
       zoom: 'week',
-      mode: 'dual',
-      projectIds: '',
-      playheadTs: 0
+      projectIds: ''
     }),
-    queryFn: () => api.getTimelineView({ zoom: 'week', mode: 'dual' })
+    queryFn: ({ signal }) =>
+      api.getTimelineSummary({
+        zoom: 'week',
+        windowStart: timelineWindow.windowStart,
+        windowEnd: timelineWindow.windowEnd,
+        playheadTs: timelineNowRef.current
+      }, { signal }),
+    ...timelineNowSummaryQueryOptions
   });
   const projectsQuery = useQuery({ queryKey: queryKeys.projects, queryFn: () => api.listProjects(false) });
   const savedViewsQuery = useQuery({ queryKey: queryKeys.savedViews, queryFn: api.listSavedViews });
@@ -62,9 +70,9 @@ export const AppShell = ({ children }: AppShellProps) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.upcoming }),
       queryClient.invalidateQueries({ queryKey: queryKeys.inbox }),
       queryClient.invalidateQueries({ queryKey: queryKeys.history }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.timeline }),
       queryClient.invalidateQueries({ queryKey: queryKeys.items })
     ]);
+    await invalidateTimelineCaches(queryClient);
     if (selectedItemId) {
       await queryClient.invalidateQueries({ queryKey: queryKeys.itemDetail(selectedItemId) });
     }
@@ -250,7 +258,7 @@ export const AppShell = ({ children }: AppShellProps) => {
   const upcomingCount = upcomingQuery.data?.buckets.reduce((sum, bucket) => sum + bucket.items.length, 0) ?? 0;
   const inboxCount = inboxQuery.data?.items.length ?? 0;
   const historyCount = historyQuery.data?.events.length ?? 0;
-  const timelineCount = (timelineQuery.data?.summary.counts.plan ?? 0) + (timelineQuery.data?.summary.counts.reality ?? 0);
+  const timelineCount = (timelineQuery.data?.counts.plan ?? 0) + (timelineQuery.data?.counts.reality ?? 0);
   const hasSelection = Boolean(selectedItemId);
   const effectiveDetailWidth = hasSelection ? detailWidth : clamp(Math.round(detailWidth * 0.62), 260, 380);
 

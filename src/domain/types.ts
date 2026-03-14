@@ -215,8 +215,6 @@ export type TimelineBucketDto = {
   end: number;
   label: string;
   count: number;
-  itemIds: string[];
-  eventIds: string[];
 };
 
 export type TimelineLaneDto = {
@@ -233,6 +231,9 @@ export type TimelineMomentDto = {
 };
 
 export type TimelineSummaryDto = {
+  bucketStart: number;
+  bucketEnd: number;
+  bucketIdentity: string;
   playheadTs: number;
   playheadLabel: string;
   counts: {
@@ -245,18 +246,16 @@ export type TimelineSummaryDto = {
   recentEvents: ItemEvent[];
 };
 
-export type TimelineViewDto = {
+export type TimelineStructureDto = {
   now: number;
   timezone: string;
   zoom: TimelineZoom;
   mode: TimelineMode;
   windowStart: number;
   windowEnd: number;
-  playheadTs: number;
   projectIds?: string[];
   lanes: TimelineLaneDto[];
   moments: TimelineMomentDto[];
-  summary: TimelineSummaryDto;
 };
 
 export type InboxViewDto = {

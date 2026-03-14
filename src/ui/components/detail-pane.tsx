@@ -8,6 +8,7 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
 import type { ItemStatus } from '@/domain/types';
 import { api } from '@/ui/api/client';
+import { invalidateTimelineCaches } from '@/ui/query/invalidate-timeline';
 import { queryKeys } from '@/ui/query/keys';
 import { useUiStore } from '@/ui/state/ui-store';
 import { cn } from '@/ui/components/utils';
@@ -74,10 +75,10 @@ export const DetailPane = ({ itemId, onClose }: DetailPaneProps) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.upcoming }),
       queryClient.invalidateQueries({ queryKey: queryKeys.inbox }),
       queryClient.invalidateQueries({ queryKey: queryKeys.history }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.timeline }),
       queryClient.invalidateQueries({ queryKey: queryKeys.items }),
       queryClient.invalidateQueries({ queryKey: queryKeys.projects })
     ]);
+    await invalidateTimelineCaches(queryClient);
     if (itemId) {
       await queryClient.invalidateQueries({ queryKey: queryKeys.itemDetail(itemId) });
     }

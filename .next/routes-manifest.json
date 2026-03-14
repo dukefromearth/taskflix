@@ -220,10 +220,16 @@
       "namedRegex": "^/api/search(?:/)?$"
     },
     {
-      "page": "/api/timeline",
-      "regex": "^/api/timeline(?:/)?$",
+      "page": "/api/timeline/structure",
+      "regex": "^/api/timeline/structure(?:/)?$",
       "routeKeys": {},
-      "namedRegex": "^/api/timeline(?:/)?$"
+      "namedRegex": "^/api/timeline/structure(?:/)?$"
+    },
+    {
+      "page": "/api/timeline/summary",
+      "regex": "^/api/timeline/summary(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/timeline/summary(?:/)?$"
     },
     {
       "page": "/history",

@@ -1,14 +1,23 @@
 export const queryKeys = {
   projects: ['projects'] as const,
-  timeline: ['timeline'] as const,
-  timelineView: (input: {
+  timelineStructure: (input: {
     windowStart: number;
     windowEnd: number;
     zoom: string;
     mode: string;
     projectIds: string;
-    playheadTs: number;
-  }) => ['timeline', input.windowStart, input.windowEnd, input.zoom, input.mode, input.projectIds, input.playheadTs] as const,
+  }) => ['timeline', 'structure', input.windowStart, input.windowEnd, input.zoom, input.mode, input.projectIds] as const,
+  timelineSummary: (input: {
+    windowStart: number;
+    windowEnd: number;
+    zoom: string;
+    projectIds: string;
+    bucketStart: number;
+    bucketEnd: number;
+  }) =>
+    ['timeline', 'summary', input.windowStart, input.windowEnd, input.zoom, input.projectIds, input.bucketStart, input.bucketEnd] as const,
+  timelineNowSummary: (input: { zoom: string; projectIds: string }) =>
+    ['timeline', 'summary', 'now', input.zoom, input.projectIds] as const,
   today: ['views', 'today'] as const,
   upcoming: ['views', 'upcoming'] as const,
   inbox: ['views', 'inbox'] as const,

@@ -1,13 +1,19 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
 import type { TimelineMode, TimelineZoom } from '@/domain/types';
 import { getDefaultTimelineWindow } from '@/domain/time';
+import { bucketFromPlayhead } from '@/domain/timeline-engine';
 import { api } from '@/ui/api/client';
-import { ItemList } from '@/ui/components/item-list';
+import { TimelineControlsPanel } from '@/ui/components/timeline/controls-panel';
+import { TimelineLanesGrid } from '@/ui/components/timeline/lanes-grid';
+import { TimelineMomentsPanel } from '@/ui/components/timeline/moments-panel';
+import { TimelineSummaryPanel } from '@/ui/components/timeline/summary-panel';
 import { useItemActions } from '@/ui/hooks/use-item-actions';
+import { invalidateTimelineCaches } from '@/ui/query/invalidate-timeline';
 import { queryKeys } from '@/ui/query/keys';
+import { timelineStructureQueryOptions, timelineSummaryQueryOptions } from '@/ui/query/timeline-query-options';
 import { useUiStore } from '@/ui/state/ui-store';
 
 type TimelinePageClientProps = {
@@ -19,7 +25,6 @@ type TimelinePageClientProps = {
   initialProjectIds?: string[];
 };
 
-const ZOOM_OPTIONS: TimelineZoom[] = ['day', 'week', 'month', 'quarter', 'year', 'all'];
 const ZOOM_ORDER: TimelineZoom[] = ['day', 'week', 'month', 'quarter', 'year', 'all'];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -94,7 +99,6 @@ export const TimelinePageClient = ({
   initialProjectIds
 }: TimelinePageClientProps) => {
   const queryClient = useQueryClient();
-  const viewportRef = useRef<HTMLDivElement | null>(null);
   const { complete, setStatus, schedule, defer } = useItemActions();
 
   const now = Date.now();
@@ -108,11 +112,13 @@ export const TimelinePageClient = ({
   const [playing, setPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<1 | 2 | 4>(1);
   const [reduceMotion, setReduceMotion] = useState(false);
-  const [viewportWidth, setViewportWidth] = useState(0);
   const [windowWidth, setWindowWidth] = useState(0);
   const [showAllTopItems, setShowAllTopItems] = useState(false);
   const [showAllMoments, setShowAllMoments] = useState(false);
   const [showAllProjects, setShowAllProjects] = useState(false);
+  const playbackCursorRef = useRef<number>(playheadTs);
+  const structureFetchCountRef = useRef(0);
+  const summaryFetchCountRef = useRef(0);
 
   const selectedItemId = useUiStore((state) => state.selectedItemId);
   const setSelectedItemId = useUiStore((state) => state.setSelectedItemId);
@@ -131,40 +137,89 @@ export const TimelinePageClient = ({
   const projectsQuery = useQuery({ queryKey: queryKeys.projects, queryFn: () => api.listProjects(false) });
   const projectIdsKey = projectIds.slice().sort().join(',');
 
-  const timelineQuery = useQuery({
-    queryKey: queryKeys.timelineView({ windowStart, windowEnd, zoom, mode, projectIds: projectIdsKey, playheadTs }),
-    queryFn: () => api.getTimelineView({ windowStart, windowEnd, zoom, mode, projectIds, playheadTs })
+  const structureQuery = useQuery({
+    queryKey: queryKeys.timelineStructure({ windowStart, windowEnd, zoom, mode, projectIds: projectIdsKey }),
+    queryFn: ({ signal }) => api.getTimelineStructure({ windowStart, windowEnd, zoom, mode, projectIds }, { signal }),
+    ...timelineStructureQueryOptions
+  });
+
+  const structureBuckets = useMemo(() => {
+    if (!structureQuery.data) return [];
+    const visibleLanes =
+      mode === 'plan'
+        ? structureQuery.data.lanes.filter((lane) => lane.key === 'plan' || lane.key === 'overduePressure' || lane.key === 'interruptions')
+        : mode === 'reality'
+          ? structureQuery.data.lanes.filter((lane) => lane.key === 'reality' || lane.key === 'overduePressure' || lane.key === 'interruptions')
+          : structureQuery.data.lanes;
+    return visibleLanes[0]?.buckets ?? structureQuery.data.lanes[0]?.buckets ?? [];
+  }, [mode, structureQuery.data]);
+
+  const activeBucket = useMemo(() => {
+    if (!structureQuery.data || structureBuckets.length === 0) return undefined;
+    return bucketFromPlayhead({
+      buckets: structureBuckets,
+      playheadTs,
+      zoom: structureQuery.data.zoom,
+      windowStart: structureQuery.data.windowStart,
+      windowEnd: structureQuery.data.windowEnd
+    });
+  }, [playheadTs, structureBuckets, structureQuery.data]);
+
+  const summaryQuery = useQuery({
+    queryKey: queryKeys.timelineSummary({
+      windowStart,
+      windowEnd,
+      zoom,
+      projectIds: projectIdsKey,
+      bucketStart: activeBucket?.bucketStart ?? windowStart,
+      bucketEnd: activeBucket?.bucketEnd ?? windowEnd
+    }),
+    queryFn: ({ signal }) =>
+      api.getTimelineSummary({
+        windowStart,
+        windowEnd,
+        zoom,
+        projectIds,
+        playheadTs,
+        bucketStart: activeBucket?.bucketStart,
+        bucketEnd: activeBucket?.bucketEnd
+      }, { signal }),
+    enabled: Boolean(activeBucket),
+    placeholderData: (previous) => previous,
+    ...timelineSummaryQueryOptions
   });
 
   useEffect(() => {
-    const node = viewportRef.current;
-    if (!node) return;
-
-    const update = () => setViewportWidth(node.clientWidth);
-    update();
-
-    const observer = new ResizeObserver(update);
-    observer.observe(node);
-    return () => observer.disconnect();
-    // TODO(gotcha): This ref can mount after async data loads, so rerun when timeline payload changes.
-  }, [timelineQuery.data]);
+    playbackCursorRef.current = playheadTs;
+  }, [playheadTs]);
 
   useEffect(() => {
-    if (!timelineQuery.data) return;
-    const itemIds = timelineQuery.data.summary.topItems.map((item) => item.id);
+    if (process.env.NODE_ENV !== 'development' || structureQuery.dataUpdatedAt === 0) return;
+    structureFetchCountRef.current += 1;
+    console.debug('[timeline][debug]', { kind: 'structure', fetches: structureFetchCountRef.current });
+  }, [structureQuery.dataUpdatedAt]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'development' || summaryQuery.dataUpdatedAt === 0) return;
+    summaryFetchCountRef.current += 1;
+    console.debug('[timeline][debug]', { kind: 'summary', fetches: summaryFetchCountRef.current });
+  }, [summaryQuery.dataUpdatedAt]);
+
+  useEffect(() => {
+    if (!summaryQuery.data) return;
+    const itemIds = summaryQuery.data.topItems.map((item) => item.id);
     setListItemIds(itemIds);
-  }, [timelineQuery.data, setListItemIds]);
+  }, [summaryQuery.data, setListItemIds]);
 
   useEffect(() => {
     if (!playing || reduceMotion) return;
     const span = Math.max(1, windowEnd - windowStart);
     const step = Math.max(60_000, Math.floor((span / 100) * playbackSpeed));
     const timer = window.setInterval(() => {
-      setPlayheadTs((current) => {
-        const next = current + step;
-        if (next > windowEnd) return windowStart;
-        return next;
-      });
+      const current = playbackCursorRef.current;
+      const next = current + step > windowEnd ? windowStart : current + step;
+      playbackCursorRef.current = next;
+      startTransition(() => setPlayheadTs(next));
     }, 260);
     return () => window.clearInterval(timer);
   }, [playing, playbackSpeed, reduceMotion, windowStart, windowEnd]);
@@ -185,13 +240,13 @@ export const TimelinePageClient = ({
     },
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.timeline }),
         queryClient.invalidateQueries({ queryKey: queryKeys.today }),
         queryClient.invalidateQueries({ queryKey: queryKeys.upcoming }),
         queryClient.invalidateQueries({ queryKey: queryKeys.inbox }),
         queryClient.invalidateQueries({ queryKey: queryKeys.history }),
         queryClient.invalidateQueries({ queryKey: queryKeys.items })
       ]);
+      await invalidateTimelineCaches(queryClient);
       if (selectedItemId) {
         await queryClient.invalidateQueries({ queryKey: queryKeys.itemDetail(selectedItemId) });
       }
@@ -242,8 +297,8 @@ export const TimelinePageClient = ({
 
   const hotkeyBucketStep = Math.max(
     DAY_MS / 24,
-    timelineQuery.data?.lanes?.[0]?.buckets?.[0]
-      ? timelineQuery.data.lanes[0].buckets[0].end - timelineQuery.data.lanes[0].buckets[0].start
+    structureQuery.data?.lanes?.[0]?.buckets?.[0]
+      ? structureQuery.data.lanes[0].buckets[0].end - structureQuery.data.lanes[0].buckets[0].start
       : Math.floor((windowEnd - windowStart) / 64)
   );
 
@@ -257,12 +312,12 @@ export const TimelinePageClient = ({
 
       if (event.key === 'ArrowLeft') {
         event.preventDefault();
-        setPlayheadTs((value) => clamp(value - hotkeyBucketStep, windowStart, windowEnd));
+        startTransition(() => setPlayheadTs((value) => clamp(value - hotkeyBucketStep, windowStart, windowEnd)));
       }
 
       if (event.key === 'ArrowRight') {
         event.preventDefault();
-        setPlayheadTs((value) => clamp(value + hotkeyBucketStep, windowStart, windowEnd));
+        startTransition(() => setPlayheadTs((value) => clamp(value + hotkeyBucketStep, windowStart, windowEnd)));
       }
 
       if (event.key === ' ') {
@@ -286,7 +341,7 @@ export const TimelinePageClient = ({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [hotkeyBucketStep, reduceMotion, windowEnd, windowStart, zoom]);
 
-  if (timelineQuery.isLoading) {
+  if (structureQuery.isLoading) {
     return (
       <div className="space-y-4">
         <div className="timeline-reveal h-52 rounded-3xl border border-stone-300 bg-panel p-4 shadow-card">
@@ -302,7 +357,7 @@ export const TimelinePageClient = ({
     );
   }
 
-  if (timelineQuery.isError || !timelineQuery.data) {
+  if (structureQuery.isError || !structureQuery.data) {
     return (
       <div className="timeline-reveal rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 shadow-card">
         <div className="font-semibold">Failed to load timeline.</div>
@@ -310,7 +365,7 @@ export const TimelinePageClient = ({
         <button
           type="button"
           className="mt-3 rounded border border-red-300 bg-white px-2 py-1 text-xs hover:border-red-500"
-          onClick={() => timelineQuery.refetch()}
+          onClick={() => structureQuery.refetch()}
         >
           Retry
         </button>
@@ -318,15 +373,25 @@ export const TimelinePageClient = ({
     );
   }
 
-  const timeline = timelineQuery.data;
+  const timeline = structureQuery.data;
+  const timelineSummary = summaryQuery.data ?? {
+    bucketStart: activeBucket?.bucketStart ?? windowStart,
+    bucketEnd: activeBucket?.bucketEnd ?? windowEnd,
+    bucketIdentity: activeBucket?.bucketIdentity ?? '',
+    playheadTs,
+    playheadLabel: activeBucket?.bucketLabel ?? '',
+    counts: { plan: 0, reality: 0, overdue: 0, interruptions: 0 },
+    topItems: [],
+    recentEvents: []
+  };
   const visibleLanes = timeline.lanes.filter((lane) => visibleLaneKeys.has(lane.key));
   const laneBuckets = visibleLanes[0]?.buckets ?? timeline.lanes[0]?.buckets ?? [];
-  const compactLayout = (viewportWidth || windowWidth) > 0 && (viewportWidth || windowWidth) < 760;
+  const compactLayout = windowWidth > 0 && windowWidth < 760;
   const allProjects = projectsQuery.data ?? [];
   const visibleProjects = compactLayout && !showAllProjects ? allProjects.slice(0, 6) : allProjects;
   const hasHiddenProjects = compactLayout && allProjects.length > 6;
-  const visibleTopItems = compactLayout && !showAllTopItems ? timeline.summary.topItems.slice(0, 6) : timeline.summary.topItems;
-  const hasHiddenTopItems = compactLayout && timeline.summary.topItems.length > 6;
+  const visibleTopItems = compactLayout && !showAllTopItems ? timelineSummary.topItems.slice(0, 6) : timelineSummary.topItems;
+  const hasHiddenTopItems = compactLayout && timelineSummary.topItems.length > 6;
   const visibleMoments = compactLayout && !showAllMoments ? timeline.moments.slice(0, 8) : timeline.moments.slice(0, 18);
   const hasHiddenMoments = compactLayout && timeline.moments.length > 8;
   const bucketCount = Math.max(1, laneBuckets.length);
@@ -334,7 +399,7 @@ export const TimelinePageClient = ({
   const maxBucketCount = Math.max(1, ...visibleLanes.flatMap((lane) => lane.buckets.map((bucket) => bucket.count)));
   const minBucketWidth = zoomMinBucketWidth(zoom);
   const gridTemplateColumns = `repeat(${bucketCount}, minmax(${minBucketWidth}px, 1fr))`;
-  const timelineWidth = Math.max(viewportWidth || 0, bucketCount * minBucketWidth);
+  const timelineWidth = Math.max(windowWidth || 0, bucketCount * minBucketWidth);
   const normalizedPlayhead = clamp(playheadTs, windowStart, windowEnd);
   const playheadRatio = (normalizedPlayhead - windowStart) / Math.max(1, windowEnd - windowStart);
   const playheadPercent = clamp(playheadRatio * 100, 0, 100);
@@ -342,383 +407,110 @@ export const TimelinePageClient = ({
   const bucketStep = laneBuckets.length > 0 ? Math.max(1, laneBuckets[0]!.end - laneBuckets[0]!.start) : DAY_MS;
   const isNearNow = Math.abs(playheadTs - Date.now()) < Math.max(90_000, bucketStep);
 
+  const jumpNow = () => {
+    const ts = Date.now();
+    startTransition(() => setPlayheadTs(ts));
+    const reset = getDefaultTimelineWindow(ts);
+    setWindowStart(reset.windowStart);
+    setWindowEnd(reset.windowEnd);
+  };
+
   return (
     <div className="space-y-5">
-      <header className="timeline-reveal relative overflow-hidden rounded-3xl border border-stone-300 bg-panel shadow-[0_30px_70px_-45px_rgba(120,20,20,0.65)]">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_10%,rgba(255,120,90,0.22),transparent_40%),radial-gradient(circle_at_85%_0%,rgba(76,111,255,0.18),transparent_36%)]" />
-        <div className="relative space-y-4 p-4 md:p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h1 className="text-2xl font-semibold text-ink md:text-3xl">Timeline</h1>
-              <p className="mt-1 max-w-2xl text-sm text-muted">
-                Scrub time like a film reel. Track commitments, real execution, overdue pressure, and interruption spikes from one playhead.
-              </p>
-            </div>
-            <div className="rounded-xl border border-stone-300/80 bg-white/70 px-3 py-2 text-right backdrop-blur">
-              <div className="text-[11px] uppercase tracking-wide text-muted">Lens</div>
-              <div className="text-sm font-medium text-ink">{modeLabel(mode)}</div>
-              <div className="text-[11px] text-muted">{new Date(playheadTs).toLocaleString()}</div>
-              <div className={`mt-1 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${isNearNow ? 'bg-red-100 text-red-900' : 'bg-stone-200 text-stone-700'}`}>
-                {isNearNow ? 'LIVE' : 'ARCHIVE'}
-              </div>
-            </div>
-          </div>
+      <TimelineControlsPanel
+        mode={mode}
+        zoom={zoom}
+        playheadTs={playheadTs}
+        windowStart={windowStart}
+        windowEnd={windowEnd}
+        isNearNow={isNearNow}
+        compactLayout={compactLayout}
+        allProjects={allProjects}
+        visibleProjects={visibleProjects}
+        activeProjectSet={activeProjectSet}
+        hasHiddenProjects={hasHiddenProjects}
+        showAllProjects={showAllProjects}
+        playing={playing}
+        reduceMotion={reduceMotion}
+        playbackSpeed={playbackSpeed}
+        bucketStep={bucketStep}
+        normalizedPlayhead={normalizedPlayhead}
+        projectChipLabel={projectChipLabel}
+        onModeChange={setMode}
+        onZoomChange={setZoom}
+        onResetProjects={() => setProjectIds([])}
+        onToggleShowAllProjects={() => setShowAllProjects((value) => !value)}
+        onToggleProject={toggleProject}
+        onStepBack={() => startTransition(() => setPlayheadTs((value) => clamp(value - bucketStep, windowStart, windowEnd)))}
+        onStepForward={() => startTransition(() => setPlayheadTs((value) => clamp(value + bucketStep, windowStart, windowEnd)))}
+        onScrub={(next) => startTransition(() => setPlayheadTs(next))}
+        onTogglePlay={() => setPlaying((value) => !value)}
+        onPlaybackSpeedChange={setPlaybackSpeed}
+        onJumpNow={jumpNow}
+        formatPoint={formatPoint}
+        modeLabel={modeLabel}
+      />
 
-          <div className="flex flex-wrap gap-2" role="group" aria-label="Timeline mode">
-            {(['dual', 'plan', 'reality'] as TimelineMode[]).map((option) => (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={mode === option}
-                className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
-                  mode === option
-                    ? 'border-red-600 bg-red-600 text-white shadow-[0_10px_30px_-16px_rgba(185,28,28,0.8)]'
-                    : 'border-stone-300 bg-white/85 text-ink hover:border-stone-400'
-                }`}
-                onClick={() => setMode(option)}
-              >
-                {option === 'dual' ? 'Dual' : option === 'plan' ? 'Plan' : 'Reality'}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex flex-wrap gap-1" role="group" aria-label="Timeline zoom presets">
-            {ZOOM_OPTIONS.map((option) => (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={zoom === option}
-                className={`rounded-lg border px-2.5 py-1 text-xs transition ${
-                  zoom === option
-                    ? 'border-ink bg-ink text-white'
-                    : 'border-stone-300 bg-white/80 text-muted hover:border-stone-500 hover:text-ink'
-                }`}
-                onClick={() => setZoom(option)}
-              >
-                {option}
-              </button>
-            ))}
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted">Project Scope</div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="rounded border border-stone-300 bg-white/80 px-2 py-1 text-xs text-muted hover:border-stone-500 hover:text-ink"
-                  onClick={() => setProjectIds([])}
-                >
-                  All Active
-                </button>
-                {hasHiddenProjects ? (
-                  <button
-                    type="button"
-                    className="rounded border border-stone-300 bg-white/80 px-2 py-1 text-xs text-muted hover:border-stone-500 hover:text-ink"
-                    onClick={() => setShowAllProjects((value) => !value)}
-                  >
-                    {showAllProjects ? 'Show Less' : `+${allProjects.length - 6} More`}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            <div className={`flex gap-2 ${compactLayout ? 'timeline-scroll overflow-x-auto pb-1' : 'flex-wrap'}`}>
-              {visibleProjects.map((project) => {
-                const active = activeProjectSet.has(project.id);
-                return (
-                  <button
-                    key={project.id}
-                    type="button"
-                    aria-pressed={active}
-                    className={`shrink-0 rounded-full border px-2.5 py-1 text-xs transition ${
-                      active
-                        ? 'border-amber-500 bg-amber-100 text-amber-950'
-                        : 'border-stone-300 bg-white/75 text-muted hover:border-stone-500 hover:text-ink'
-                    }`}
-                    onClick={() => toggleProject(project.id)}
-                  >
-                    {projectChipLabel(project)}
-                  </button>
-                );
-              })}
-              {allProjects.length === 0 ? <span className="text-xs text-muted">No projects yet.</span> : null}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-stone-300 bg-white/75 p-3 backdrop-blur">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
-              <div>
-                Window {formatPoint(windowStart)} - {formatPoint(windowEnd)}
-              </div>
-              <div className="font-medium text-ink">Playhead {formatPoint(playheadTs)}</div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="rounded border border-stone-300 px-2 py-1 text-xs text-muted hover:border-stone-500 hover:text-ink"
-                onClick={() => setPlayheadTs((value) => clamp(value - bucketStep, windowStart, windowEnd))}
-              >
-                - Step
-              </button>
-              <input
-                type="range"
-                min={windowStart}
-                max={windowEnd}
-                step={Math.max(1, bucketStep)}
-                value={normalizedPlayhead}
-                onChange={(event) => setPlayheadTs(Number(event.target.value))}
-                className="timeline-slider h-2 w-full cursor-pointer accent-red-600"
-                aria-label="Timeline playhead scrubber"
-              />
-              <button
-                type="button"
-                className="rounded border border-stone-300 px-2 py-1 text-xs text-muted hover:border-stone-500 hover:text-ink"
-                onClick={() => setPlayheadTs((value) => clamp(value + bucketStep, windowStart, windowEnd))}
-              >
-                Step +
-              </button>
-            </div>
-
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-              <button
-                type="button"
-                className="rounded border border-stone-300 bg-white px-2 py-1 text-muted hover:border-stone-500 hover:text-ink"
-                onClick={() => setPlaying((value) => !value)}
-                disabled={reduceMotion}
-              >
-                {playing ? 'Pause' : 'Play'}
-              </button>
-              <label className="text-muted">
-                Speed
-                <select
-                  className="ml-1 rounded border border-stone-300 bg-white px-2 py-1 text-xs text-ink"
-                  value={String(playbackSpeed)}
-                  onChange={(event) => setPlaybackSpeed(Number(event.target.value) as 1 | 2 | 4)}
-                >
-                  <option value="1">1x</option>
-                  <option value="2">2x</option>
-                  <option value="4">4x</option>
-                </select>
-              </label>
-              <button
-                type="button"
-                className="rounded border border-stone-300 bg-white px-2 py-1 text-muted hover:border-stone-500 hover:text-ink"
-                onClick={() => {
-                  const ts = Date.now();
-                  setPlayheadTs(ts);
-                  const reset = getDefaultTimelineWindow(ts);
-                  setWindowStart(reset.windowStart);
-                  setWindowEnd(reset.windowEnd);
-                }}
-              >
-                Now
-              </button>
-              <div className="ml-auto hidden text-muted md:block">Shortcuts: Left/Right scrub, Space play, +/- zoom</div>
-            </div>
-            {compactLayout ? <div className="mt-2 text-[11px] text-muted">Shortcuts: Left/Right scrub, Space play, +/- zoom.</div> : null}
-            {reduceMotion ? <div className="mt-2 text-xs text-muted">Playback disabled by reduced-motion preference.</div> : null}
-          </div>
-        </div>
-      </header>
-
-      <section className="timeline-reveal rounded-2xl border border-stone-300 bg-panel p-3 shadow-card md:p-4">
-        <div className="relative">
-          <div className="pointer-events-none absolute inset-y-0 left-0 z-30 w-5 bg-gradient-to-r from-panel to-transparent" />
-          <div className="pointer-events-none absolute inset-y-0 right-0 z-30 w-5 bg-gradient-to-l from-panel to-transparent" />
-          <div ref={viewportRef} className="timeline-scroll overflow-x-auto pb-2">
-          <div className="relative" style={{ width: `${timelineWidth}px`, minWidth: '100%' }}>
-            <div
-              className="pointer-events-none absolute inset-y-0 z-20 w-px bg-red-600/80"
-              style={{ left: `${playheadPercent}%` }}
-              aria-hidden="true"
-            />
-            <div className="pointer-events-none absolute inset-y-0 z-10 w-8 -translate-x-1/2 bg-gradient-to-r from-red-500/0 via-red-500/10 to-red-500/0" style={{ left: `${playheadPercent}%` }} aria-hidden="true" />
-
-            <div className="space-y-3">
-              {visibleLanes.map((lane) => {
-                const laneStyle = laneTone(lane.key);
-                return (
-                  <div key={lane.key} className="film-lane rounded-xl border border-stone-300 bg-white/88 p-2.5">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <div className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${laneStyle.text}`}>{lane.label}</div>
-                      <div className="text-[11px] text-muted">
-                        {lane.buckets.reduce((sum, bucket) => sum + bucket.count, 0)} total · peak {Math.max(0, ...lane.buckets.map((bucket) => bucket.count))}
-                      </div>
-                    </div>
-
-                    <div className={`rounded-lg bg-gradient-to-r ${laneStyle.glow} p-1.5`}>
-                      <div className="grid items-end gap-1" style={{ gridTemplateColumns }}>
-                        {lane.buckets.map((bucket, index) => {
-                          const isPlayhead = index === playheadBucketIndex;
-                          const heightRatio = bucket.count === 0 ? 0.08 : bucket.count / maxBucketCount;
-                          const bucketHeight = 18 + Math.round(heightRatio * 72);
-
-                          return (
-                            <button
-                              key={`${lane.key}-${index}`}
-                              type="button"
-                              className={`group relative flex items-end justify-center rounded-md border transition-transform duration-150 ${
-                                isPlayhead
-                                  ? 'border-red-500 bg-red-50 shadow-[0_0_0_1px_rgba(239,68,68,0.26)]'
-                                  : 'border-stone-200 bg-white/85 hover:-translate-y-0.5 hover:border-stone-400'
-                              }`}
-                              style={{ height: `${bucketHeight}px` }}
-                              onClick={() => setPlayheadTs(Math.floor((bucket.start + bucket.end) / 2))}
-                              title={`${lane.label}: ${bucket.count} in ${bucket.label}`}
-                            >
-                              <div
-                                className={`absolute inset-x-0 bottom-0 rounded-b-md ${laneStyle.fill}`}
-                                style={{ height: `${Math.max(3, Math.round((bucket.count / maxBucketCount) * 100))}%` }}
-                                aria-hidden="true"
-                              />
-                              <span className={`relative z-10 mb-0.5 text-[10px] font-medium ${isPlayhead ? 'text-red-700' : 'text-stone-600 group-hover:text-ink'}`}>
-                                {bucket.count > 0 ? bucket.count : ''}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-
-              <div className="grid gap-1 text-[10px] text-muted" style={{ gridTemplateColumns }}>
-                {laneBuckets.map((bucket, index) => (
-                  <div key={`axis-${index}`} className="truncate text-center" title={bucket.label}>
-                    {index % axisStride === 0 || index === laneBuckets.length - 1 ? bucket.label : ''}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-          </div>
-        </div>
-      </section>
+      <TimelineLanesGrid
+        visibleLanes={visibleLanes}
+        laneBuckets={laneBuckets}
+        axisStride={axisStride}
+        gridTemplateColumns={gridTemplateColumns}
+        timelineWidth={timelineWidth}
+        playheadPercent={playheadPercent}
+        playheadBucketIndex={playheadBucketIndex}
+        maxBucketCount={maxBucketCount}
+        laneTone={laneTone}
+        onJumpToBucket={setPlayheadTs}
+      />
 
       <section className="timeline-reveal grid gap-4 xl:grid-cols-[1.85fr_1fr]">
-        <div className="space-y-3 rounded-2xl border border-stone-300 bg-panel p-3 shadow-card">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">What Matters</h2>
+        <TimelineSummaryPanel
+          timelineSummary={timelineSummary}
+          visibleTopItems={visibleTopItems}
+          hasHiddenTopItems={hasHiddenTopItems}
+          showAllTopItems={showAllTopItems}
+          selectedItemId={selectedItemId}
+          isFetching={summaryQuery.isFetching}
+          onSelectItem={setSelectedItemId}
+          onToggleShowAllTopItems={() => setShowAllTopItems((value) => !value)}
+          onComplete={(itemId) => complete(itemId)}
+          onActivate={(itemId) => setStatus(itemId, 'active')}
+          onInbox={(itemId) => setStatus(itemId, 'inbox')}
+          onSchedule={(itemId) => schedule(itemId, playheadTs)}
+          onDefer={(itemId) => defer(itemId, playheadTs + DAY_MS)}
+          onCancelSelected={() => {
+            if (!selectedItemId) return;
+            setStatus(selectedItemId, 'canceled');
+          }}
+          onAddTags={() => {
+            if (!selectedItemId) return;
+            const raw = window.prompt('Add tags (comma-separated)');
+            if (!raw) return;
+            const tags = raw
+              .split(',')
+              .map((value) => value.trim())
+              .filter(Boolean);
+            if (tags.length > 0) selectedItemActionsMutation.mutate({ tags });
+          }}
+          onAddLink={() => {
+            if (!selectedItemId) return;
+            const url = window.prompt('Link URL');
+            if (!url) return;
+            const label = window.prompt('Label (optional)') ?? undefined;
+            selectedItemActionsMutation.mutate({ link: { url, label } });
+          }}
+        />
 
-          <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-5">
-            <MetricChip label="Plan" value={timeline.summary.counts.plan} tone="emerald" />
-            <MetricChip label="Reality" value={timeline.summary.counts.reality} tone="red" />
-            <MetricChip label="Overdue" value={timeline.summary.counts.overdue} tone="amber" />
-            <MetricChip label="Interruptions" value={timeline.summary.counts.interruptions} tone="violet" />
-            <div className="rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-xs md:col-span-1">
-              <div className="text-muted">Slice</div>
-              <div className="font-medium text-ink">{timeline.summary.playheadLabel}</div>
-            </div>
-          </div>
-
-          <ItemList
-            items={visibleTopItems}
-            selectedItemId={selectedItemId}
-            onSelect={setSelectedItemId}
-            emptyLabel="No top items at this playhead."
-            actions={{
-              onComplete: (itemId) => complete(itemId),
-              onActivate: (itemId) => setStatus(itemId, 'active'),
-              onInbox: (itemId) => setStatus(itemId, 'inbox'),
-              onScheduleTomorrow: (itemId) => schedule(itemId, playheadTs),
-              onDeferDay: (itemId) => defer(itemId, playheadTs + DAY_MS)
-            }}
-          />
-          {hasHiddenTopItems ? (
-            <button
-              type="button"
-              className="rounded border border-stone-300 bg-white px-2 py-1 text-xs text-muted hover:border-stone-500 hover:text-ink"
-              onClick={() => setShowAllTopItems((value) => !value)}
-            >
-              {showAllTopItems ? 'Show Fewer Items' : `Show All ${timeline.summary.topItems.length} Items`}
-            </button>
-          ) : null}
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="rounded border border-stone-300 px-2 py-1 text-xs hover:border-red-600 hover:text-red-700"
-              disabled={!selectedItemId}
-              onClick={() => {
-                if (!selectedItemId) return;
-                setStatus(selectedItemId, 'canceled');
-              }}
-            >
-              Cancel Selected
-            </button>
-            <button
-              type="button"
-              className="rounded border border-stone-300 px-2 py-1 text-xs hover:border-stone-500 hover:text-ink"
-              disabled={!selectedItemId}
-              onClick={() => {
-                if (!selectedItemId) return;
-                const raw = window.prompt('Add tags (comma-separated)');
-                if (!raw) return;
-                const tags = raw
-                  .split(',')
-                  .map((value) => value.trim())
-                  .filter(Boolean);
-                if (tags.length > 0) selectedItemActionsMutation.mutate({ tags });
-              }}
-            >
-              Add Tags
-            </button>
-            <button
-              type="button"
-              className="rounded border border-stone-300 px-2 py-1 text-xs hover:border-stone-500 hover:text-ink"
-              disabled={!selectedItemId}
-              onClick={() => {
-                if (!selectedItemId) return;
-                const url = window.prompt('Link URL');
-                if (!url) return;
-                const label = window.prompt('Label (optional)') ?? undefined;
-                selectedItemActionsMutation.mutate({ link: { url, label } });
-              }}
-            >
-              Add Link
-            </button>
-          </div>
-        </div>
-
-        <aside className="space-y-3 rounded-2xl border border-stone-300 bg-panel p-3 shadow-card">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Timeline Moments</h2>
-          <div className="max-h-[22rem] space-y-2 overflow-y-auto pr-1 text-xs">
-            {visibleMoments.map((moment, index) => (
-              <button
-                key={`${moment.kind}-${moment.ts}-${index}`}
-                type="button"
-                className="w-full rounded-lg border border-stone-300 bg-white px-2 py-1.5 text-left transition hover:border-red-500"
-                onClick={() => setPlayheadTs(moment.ts)}
-              >
-                <div className="font-medium text-ink">{moment.label}</div>
-                <div className="text-muted">
-                  {moment.kind} · count {moment.count}
-                </div>
-              </button>
-            ))}
-          </div>
-          {hasHiddenMoments ? (
-            <button
-              type="button"
-              className="rounded border border-stone-300 bg-white px-2 py-1 text-xs text-muted hover:border-stone-500 hover:text-ink"
-              onClick={() => setShowAllMoments((value) => !value)}
-            >
-              {showAllMoments ? 'Show Fewer Moments' : `Show All ${timeline.moments.length} Moments`}
-            </button>
-          ) : null}
-
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Recent Events @ Playhead</h3>
-          <div className="space-y-1 text-xs text-muted">
-            {timeline.summary.recentEvents.length === 0 ? <div>No events in this slice.</div> : null}
-            {timeline.summary.recentEvents.map((event) => (
-              <div key={event.id} className="rounded-lg border border-stone-200 bg-white p-2">
-                <div className="font-medium text-ink">{event.eventType}</div>
-                <div>{new Date(event.occurredAt).toLocaleString()}</div>
-              </div>
-            ))}
-          </div>
-        </aside>
+        <TimelineMomentsPanel
+          moments={visibleMoments}
+          allMomentsCount={timeline.moments.length}
+          hasHiddenMoments={hasHiddenMoments}
+          showAllMoments={showAllMoments}
+          recentEvents={timelineSummary.recentEvents}
+          onToggleShowAllMoments={() => setShowAllMoments((value) => !value)}
+          onJumpToMoment={setPlayheadTs}
+        />
       </section>
 
       <section className="timeline-reveal rounded-2xl border border-stone-300 bg-panel p-3 text-xs text-muted shadow-card">
@@ -741,39 +533,13 @@ export const TimelinePageClient = ({
               const resetWindow = getDefaultTimelineWindow(resetNow);
               setWindowStart(resetWindow.windowStart);
               setWindowEnd(resetWindow.windowEnd);
-              setPlayheadTs(resetNow);
+              startTransition(() => setPlayheadTs(resetNow));
             }}
           >
             Reset Default
           </button>
         </div>
       </section>
-    </div>
-  );
-};
-
-const MetricChip = ({
-  label,
-  value,
-  tone
-}: {
-  label: string;
-  value: number;
-  tone: 'emerald' | 'red' | 'amber' | 'violet';
-}) => {
-  const toneClasses =
-    tone === 'emerald'
-      ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-      : tone === 'red'
-        ? 'border-red-200 bg-red-50 text-red-900'
-        : tone === 'amber'
-          ? 'border-amber-200 bg-amber-50 text-amber-900'
-          : 'border-violet-200 bg-violet-50 text-violet-900';
-
-  return (
-    <div className={`rounded-lg border px-2 py-1.5 ${toneClasses}`}>
-      <div className="text-[11px] uppercase tracking-wide">{label}</div>
-      <div className="text-sm font-semibold">{value}</div>
     </div>
   );
 };

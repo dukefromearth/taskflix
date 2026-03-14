@@ -8,7 +8,8 @@ import { GET as getItemHandler } from '../app/api/items/[itemId]/route';
 import { POST as createItemHandler } from '../app/api/items/route';
 import { POST as completeItemHandler } from '../app/api/items/[itemId]/complete/route';
 import { GET as getViewHandler } from '../app/api/views/[name]/route';
-import { GET as getTimelineHandler } from '../app/api/timeline/route';
+import { GET as getTimelineStructureHandler } from '../app/api/timeline/structure/route';
+import { GET as getTimelineSummaryHandler } from '../app/api/timeline/summary/route';
 import { closeDatabaseRuntime } from '../src/db/client';
 
 let tempDir: string | undefined;
@@ -181,7 +182,7 @@ describe('API smoke (Next Route Handlers)', () => {
     expect(projectIdA).toBe(projectIdB);
   });
 
-  it('serves timeline route with validated query and envelope shape', async () => {
+  it('serves split timeline routes with strict summary validation', async () => {
     configureTestDatabase();
 
     const project = await parseOk<{ id: string }>(
@@ -209,19 +210,59 @@ describe('API smoke (Next Route Handlers)', () => {
       )
     );
 
-    const timelineRes = await getTimelineHandler(
+    const timelineStructureRes = await getTimelineStructureHandler(
       new Request(
-        `http://localhost/api/timeline?zoom=week&mode=dual&windowStart=${Date.UTC(
+        `http://localhost/api/timeline/structure?zoom=week&mode=dual&windowStart=${Date.UTC(
+          2026,
+          2,
+          10
+        )}&windowEnd=${Date.UTC(2026, 2, 20)}`
+      )
+    );
+    expect(timelineStructureRes.status).toBe(200);
+    const structure = await parseOk<{ lanes: Array<{ key: string; buckets: unknown[] }> }>(timelineStructureRes);
+    expect(structure.lanes.some((lane) => lane.key === 'plan')).toBe(true);
+    expect(structure.lanes.some((lane) => lane.key === 'reality')).toBe(true);
+
+    const timelineSummaryRes = await getTimelineSummaryHandler(
+      new Request(
+        `http://localhost/api/timeline/summary?zoom=week&windowStart=${Date.UTC(
           2026,
           2,
           10
         )}&windowEnd=${Date.UTC(2026, 2, 20)}&playheadTs=${Date.UTC(2026, 2, 14)}`
       )
     );
-    expect(timelineRes.status).toBe(200);
-    const timeline = await parseOk<{ lanes: Array<{ key: string; buckets: unknown[] }>; summary: { counts: { plan: number } } }>(timelineRes);
-    expect(timeline.lanes.some((lane) => lane.key === 'plan')).toBe(true);
-    expect(timeline.lanes.some((lane) => lane.key === 'reality')).toBe(true);
-    expect(timeline.summary.counts.plan).toBeGreaterThanOrEqual(0);
+    expect(timelineSummaryRes.status).toBe(200);
+    const summary = await parseOk<{ counts: { plan: number }; bucketIdentity: string }>(timelineSummaryRes);
+    expect(summary.counts.plan).toBeGreaterThanOrEqual(0);
+    expect(summary.bucketIdentity.length).toBeGreaterThan(0);
+
+    const invalidBucketRes = await getTimelineSummaryHandler(
+      new Request(
+        `http://localhost/api/timeline/summary?zoom=week&windowStart=${Date.UTC(
+          2026,
+          2,
+          10
+        )}&windowEnd=${Date.UTC(2026, 2, 20)}&bucketStart=${Date.UTC(2026, 2, 10) + 1}&bucketEnd=${
+          Date.UTC(2026, 2, 11) + 1
+        }`
+      )
+    );
+    expect(invalidBucketRes.status).toBe(400);
+    const invalidBucketEnvelope = await parseEnvelope<{ message: string; details?: unknown }>(invalidBucketRes);
+    expect(invalidBucketEnvelope.ok).toBe(false);
+
+    const modeRes = await getTimelineSummaryHandler(
+      new Request(
+        `http://localhost/api/timeline/summary?zoom=week&mode=dual&windowStart=${Date.UTC(2026, 2, 10)}&windowEnd=${Date.UTC(
+          2026,
+          2,
+          20
+        )}`
+      )
+    );
+    expect(modeRes.status).toBe(400);
+
   });
 });

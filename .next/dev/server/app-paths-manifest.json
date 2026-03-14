@@ -1,8 +1,11 @@
 {
   "/(shell)/timeline/page": "app/(shell)/timeline/page.js",
+  "/api/health/route": "app/api/health/route.js",
+  "/api/items/[itemId]/complete/route": "app/api/items/[itemId]/complete/route.js",
   "/api/items/route": "app/api/items/route.js",
   "/api/projects/route": "app/api/projects/route.js",
   "/api/saved-views/route": "app/api/saved-views/route.js",
-  "/api/timeline/route": "app/api/timeline/route.js",
+  "/api/timeline/structure/route": "app/api/timeline/structure/route.js",
+  "/api/timeline/summary/route": "app/api/timeline/summary/route.js",
   "/api/views/[name]/route": "app/api/views/[name]/route.js"
 }

@@ -116,7 +116,7 @@ describe('service view/query behavior', () => {
     expect((await service.search('roadmap'))[0]?.item.id).toBe(itemB.id);
   });
 
-  it('builds timeline lanes and summary around playhead', async () => {
+  it('builds timeline structure and bucket-scoped summary', async () => {
     const service = createService();
     const now = Date.UTC(2026, 2, 14, 12, 0, 0, 0);
     const project = await service.createProject({ title: 'Timeline', slug: 'timeline' });
@@ -136,20 +136,59 @@ describe('service view/query behavior', () => {
     });
     await service.changeItemStatus(interruption.id, 'active');
 
-    const timeline = await service.getTimelineView({
+    const structure = await service.getTimelineStructure({
       zoom: 'day',
       mode: 'dual',
       now,
-      playheadTs: now,
       windowStart: now - 6 * 60 * 60 * 1000,
       windowEnd: now + 6 * 60 * 60 * 1000
     });
 
-    expect(timeline.lanes.find((lane) => lane.key === 'plan')).toBeDefined();
-    expect(timeline.lanes.find((lane) => lane.key === 'reality')).toBeDefined();
-    expect(timeline.lanes.find((lane) => lane.key === 'overduePressure')).toBeDefined();
-    expect(timeline.lanes.find((lane) => lane.key === 'interruptions')).toBeDefined();
-    expect(timeline.moments.length).toBeGreaterThanOrEqual(1);
-    expect(timeline.summary.topItems.length).toBeGreaterThanOrEqual(1);
+    expect(structure.lanes.find((lane) => lane.key === 'plan')).toBeDefined();
+    expect(structure.lanes.find((lane) => lane.key === 'reality')).toBeDefined();
+    expect(structure.lanes.find((lane) => lane.key === 'overduePressure')).toBeDefined();
+    expect(structure.lanes.find((lane) => lane.key === 'interruptions')).toBeDefined();
+    expect(structure.moments.length).toBeGreaterThanOrEqual(1);
+
+    const planLane = structure.lanes.find((lane) => lane.key === 'plan');
+    const firstBucket = planLane?.buckets.find((bucket) => bucket.count > 0) ?? structure.lanes[0]?.buckets[0];
+    expect(firstBucket).toBeDefined();
+    if (!firstBucket) return;
+
+    const summaryA = await service.getTimelineSummary({
+      zoom: 'day',
+      now,
+      windowStart: structure.windowStart,
+      windowEnd: structure.windowEnd,
+      bucketStart: firstBucket.start,
+      bucketEnd: firstBucket.end,
+      playheadTs: firstBucket.start + 1_000
+    });
+    const summaryB = await service.getTimelineSummary({
+      zoom: 'day',
+      now,
+      windowStart: structure.windowStart,
+      windowEnd: structure.windowEnd,
+      bucketStart: firstBucket.start,
+      bucketEnd: firstBucket.end,
+      playheadTs: firstBucket.end - 1_000
+    });
+
+    expect(summaryA.bucketIdentity).toBe(summaryB.bucketIdentity);
+    expect(summaryA.counts).toEqual(summaryB.counts);
+    if (summaryA.counts.plan > 0 || summaryA.counts.reality > 0) {
+      expect(summaryA.topItems.length).toBeGreaterThanOrEqual(1);
+    }
+
+    await expect(
+      service.getTimelineSummary({
+        zoom: 'day',
+        now,
+        windowStart: structure.windowStart,
+        windowEnd: structure.windowEnd,
+        bucketStart: firstBucket.start + 1,
+        bucketEnd: firstBucket.end + 1
+      })
+    ).rejects.toThrowError(/Invalid timeline bucket selection/);
   });
 });
