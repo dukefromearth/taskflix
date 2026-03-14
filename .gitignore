@@ -1,8 +1,13 @@
 node_modules/
 dist/
+.next/
 .uploads/
+test-results/
 .DS_Store
 *.log
 *.db
 *.sqlite
-*.next/
+taskio.db
+taskio.db-*
+
+# GOTCHA: Use `.next/` (not `*.next/`) so Next.js output is reliably ignored.
