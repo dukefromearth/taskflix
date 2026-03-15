@@ -19,6 +19,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "arch": "node tools/arch/arch.mjs",
+    "arch:deps": "node tools/arch/arch.mjs --deps",
+    "arch:types": "node tools/arch/arch.mjs --types",
+    "arch:callgraph": "node tools/arch/arch.mjs --callgraph",
+    "arch:all": "node tools/arch/arch.mjs --all --out-dir tmp/arch",
+    "arch:verify": "node tools/arch/verify-repeatability.mjs",
     "verify": "npm run test && npm run build"
   },
   "dependencies": {
@@ -45,10 +50,10 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@playwright/test": "^1.54.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.13.11",
     "dependency-cruiser": "^17.3.9",
-    "@playwright/test": "^1.54.2",
     "fast-glob": "^3.3.3",
     "ts-morph": "^27.0.2",
     "tsx": "^4.19.3",

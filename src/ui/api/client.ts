@@ -1,64 +1,18 @@
-import type { ApiError, ApiSuccess } from '@/api/contracts';
-import type {
-  Attachment,
-  HistoryViewDto,
-  InboxViewDto,
-  Item,
-  ItemDetailDto,
-  ItemStatus,
-  Link,
-  Project,
-  ProjectViewDto,
-  SavedView,
-  SearchResultDto,
-  TimelineMode,
-  TimelineStructureDto,
-  TimelineSummaryDto,
-  TimelineZoom,
-  TodayViewDto,
-  UpcomingViewDto
-} from '@/domain/types';
+import { z } from 'zod';
+import {
+  HistoryViewSchema,
+  InboxViewSchema,
+  ProjectViewSchema,
+  TodayViewSchema,
+  UpcomingViewSchema
+} from '@/contracts/entities';
+import { ENDPOINT_BY_ID } from '@/contracts/registry';
+import type { EndpointById } from '@/contracts/registry';
+import { createContractClient } from '@/contracts/runtime/client';
+import type { EndpointInput } from '@/contracts/types';
 
-type Envelope<T> = ApiSuccess<T> | ApiError;
-
-type RequestOptions = Omit<RequestInit, 'body'> & {
-  body?: unknown;
+type SignalOptions = {
   signal?: AbortSignal;
-};
-
-const readErrorText = async (response: Response): Promise<string> => {
-  try {
-    const text = await response.text();
-    return text || `HTTP ${response.status}`;
-  } catch {
-    return `HTTP ${response.status}`;
-  }
-};
-
-const parseEnvelope = <T>(payload: Envelope<T>): T => {
-  if (!payload.ok) {
-    throw new Error(payload.error.message);
-  }
-  return payload.data;
-};
-
-const request = async <T>(url: string, options?: RequestOptions): Promise<T> => {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      ...(options?.headers ?? {}),
-      ...(options?.body === undefined ? {} : { 'content-type': 'application/json' })
-    },
-    body: options?.body === undefined ? undefined : JSON.stringify(options.body)
-  });
-
-  if (!response.ok) {
-    const message = await readErrorText(response);
-    throw new Error(message);
-  }
-
-  const payload = (await response.json()) as Envelope<T>;
-  return parseEnvelope(payload);
 };
 
 const toBase64 = async (file: File): Promise<string> => {
@@ -71,77 +25,154 @@ const toBase64 = async (file: File): Promise<string> => {
   return btoa(binary);
 };
 
+const toCsv = (values?: string[]): string | undefined => {
+  if (!values || values.length === 0) return undefined;
+  return values.join(',');
+};
+
+const toNumericQuery = (value?: number): string | undefined => (value === undefined ? undefined : String(value));
+
+type QueryStringToNumber<T> = T extends string | undefined ? number : never;
+type QueryStringToList<T> = T extends string | undefined ? string[] : never;
+type QueryStringToBoolean<T> = T extends 'true' | 'false' | undefined ? boolean : never;
+
+type ItemPatchInput = EndpointInput<EndpointById<'items.update'>>['body'];
+type ItemStatusInput = EndpointInput<EndpointById<'items.status'>>['body']['to'];
+type ItemScheduleInput = EndpointInput<EndpointById<'items.schedule'>>['body'];
+type ItemDeferInput = EndpointInput<EndpointById<'items.defer'>>['body'];
+type ItemTagUpdateInput = EndpointInput<EndpointById<'items.tags'>>['body'];
+type ItemLinkInput = EndpointInput<EndpointById<'items.links'>>['body'];
+type ProjectCreateInput = EndpointInput<EndpointById<'projects.create'>>['body'];
+type ProjectPatchInput = EndpointInput<EndpointById<'projects.update'>>['body'];
+type ProjectReorderInput = EndpointInput<EndpointById<'projects.reorder'>>['body'];
+type SavedViewCreateInput = EndpointInput<EndpointById<'savedViews.create'>>['body'];
+type SavedViewPatchInput = EndpointInput<EndpointById<'savedViews.update'>>['body'];
+type SearchQueryInput = EndpointInput<EndpointById<'search.query'>>['query'];
+type TimelineStructureQueryInput = EndpointInput<EndpointById<'timeline.structure'>>['query'];
+type TimelineSummaryQueryInput = EndpointInput<EndpointById<'timeline.summary'>>['query'];
+type ViewQueryInput = EndpointInput<EndpointById<'views.get'>>['query'];
+
+type SearchParams = {
+  q: NonNullable<SearchQueryInput['q']>;
+  statuses?: QueryStringToList<SearchQueryInput['statuses']>;
+  projectIds?: QueryStringToList<SearchQueryInput['projectIds']>;
+  tagAny?: QueryStringToList<SearchQueryInput['tagAny']>;
+  tagAll?: QueryStringToList<SearchQueryInput['tagAll']>;
+  includeDone?: QueryStringToBoolean<SearchQueryInput['includeDone']>;
+};
+
+type TimelineStructureParams = {
+  zoom?: TimelineStructureQueryInput['zoom'];
+  mode?: TimelineStructureQueryInput['mode'];
+  windowStart?: QueryStringToNumber<TimelineStructureQueryInput['windowStart']>;
+  windowEnd?: QueryStringToNumber<TimelineStructureQueryInput['windowEnd']>;
+  projectIds?: QueryStringToList<TimelineStructureQueryInput['projectIds']>;
+};
+
+type TimelineSummaryParams = {
+  zoom?: TimelineSummaryQueryInput['zoom'];
+  windowStart?: QueryStringToNumber<TimelineSummaryQueryInput['windowStart']>;
+  windowEnd?: QueryStringToNumber<TimelineSummaryQueryInput['windowEnd']>;
+  playheadTs?: QueryStringToNumber<TimelineSummaryQueryInput['playheadTs']>;
+  bucketStart?: QueryStringToNumber<TimelineSummaryQueryInput['bucketStart']>;
+  bucketEnd?: QueryStringToNumber<TimelineSummaryQueryInput['bucketEnd']>;
+  projectIds?: QueryStringToList<TimelineSummaryQueryInput['projectIds']>;
+};
+
+const contractClient = createContractClient(ENDPOINT_BY_ID, (input, init) => globalThis.fetch(input, init));
+
+const isViewErrorPayload = (value: unknown): value is { ok: false; error: string } => {
+  if (!value || typeof value !== 'object') return false;
+  const maybe = value as { ok?: unknown; error?: unknown };
+  return maybe.ok === false && typeof maybe.error === 'string';
+};
+
+const parseViewPayload = <T>(schema: z.ZodType<T>, payload: unknown): T => {
+  if (isViewErrorPayload(payload)) {
+    throw new Error(payload.error);
+  }
+  return schema.parse(payload);
+};
+
 export const api = {
   listProjects: (includeArchived = false) =>
-    request<Project[]>(`/api/projects?includeArchived=${includeArchived ? 'true' : 'false'}`),
+    contractClient.call('projects.list', { query: { includeArchived: includeArchived ? 'true' : 'false' } }),
+  getProject: (projectId: string) =>
+    contractClient.call('projects.get', { params: { projectId } }),
+  createProject: (input: ProjectCreateInput) =>
+    contractClient.call('projects.create', { body: input }),
+  updateProject: (projectId: string, patch: ProjectPatchInput) =>
+    contractClient.call('projects.update', { params: { projectId }, body: patch }),
+  deleteProject: (projectId: string) =>
+    contractClient.call('projects.delete', { params: { projectId } }),
+  reorderProjects: (input: ProjectReorderInput) =>
+    contractClient.call('projects.reorder', { body: input }),
 
-  getTodayView: () => request<TodayViewDto>('/api/views/today'),
-  getUpcomingView: () => request<UpcomingViewDto>('/api/views/upcoming'),
-  getInboxView: () => request<InboxViewDto>('/api/views/inbox'),
-  getHistoryView: () => request<HistoryViewDto>('/api/views/history'),
-  getProjectView: (projectId: string) => request<ProjectViewDto>(`/api/views/project?projectId=${encodeURIComponent(projectId)}`),
-  getTimelineStructure: (params?: {
-    zoom?: TimelineZoom;
-    mode?: TimelineMode;
-    windowStart?: number;
-    windowEnd?: number;
-    projectIds?: string[];
-  }, options?: Pick<RequestOptions, 'signal'>) => {
-    const query = new URLSearchParams();
-    if (params?.zoom) query.set('zoom', params.zoom);
-    if (params?.mode) query.set('mode', params.mode);
-    if (params?.windowStart !== undefined) query.set('windowStart', String(params.windowStart));
-    if (params?.windowEnd !== undefined) query.set('windowEnd', String(params.windowEnd));
-    if (params?.projectIds && params.projectIds.length > 0) query.set('projectIds', params.projectIds.join(','));
-    const suffix = query.toString();
-    return request<TimelineStructureDto>(`/api/timeline/structure${suffix ? `?${suffix}` : ''}`, { signal: options?.signal });
+  getTodayView: async () => {
+    const payload = await contractClient.call('views.get', { params: { name: 'today' } });
+    return parseViewPayload(TodayViewSchema, payload);
   },
-  getTimelineSummary: (params?: {
-    zoom?: TimelineZoom;
-    windowStart?: number;
-    windowEnd?: number;
-    playheadTs?: number;
-    bucketStart?: number;
-    bucketEnd?: number;
-    projectIds?: string[];
-  }, options?: Pick<RequestOptions, 'signal'>) => {
-    const query = new URLSearchParams();
-    if (params?.zoom) query.set('zoom', params.zoom);
-    if (params?.windowStart !== undefined) query.set('windowStart', String(params.windowStart));
-    if (params?.windowEnd !== undefined) query.set('windowEnd', String(params.windowEnd));
-    if (params?.playheadTs !== undefined) query.set('playheadTs', String(params.playheadTs));
-    if (params?.bucketStart !== undefined) query.set('bucketStart', String(params.bucketStart));
-    if (params?.bucketEnd !== undefined) query.set('bucketEnd', String(params.bucketEnd));
-    if (params?.projectIds && params.projectIds.length > 0) query.set('projectIds', params.projectIds.join(','));
-    const suffix = query.toString();
-    return request<TimelineSummaryDto>(`/api/timeline/summary${suffix ? `?${suffix}` : ''}`, { signal: options?.signal });
+  getUpcomingView: async () => {
+    const payload = await contractClient.call('views.get', { params: { name: 'upcoming' } });
+    return parseViewPayload(UpcomingViewSchema, payload);
+  },
+  getInboxView: async () => {
+    const payload = await contractClient.call('views.get', { params: { name: 'inbox' } });
+    return parseViewPayload(InboxViewSchema, payload);
+  },
+  getHistoryView: async () => {
+    const payload = await contractClient.call('views.get', { params: { name: 'history' } });
+    return parseViewPayload(HistoryViewSchema, payload);
+  },
+  getProjectView: async (projectId: NonNullable<ViewQueryInput['projectId']>) => {
+    const payload = await contractClient.call('views.get', { params: { name: 'project' }, query: { projectId } });
+    return parseViewPayload(ProjectViewSchema, payload);
+  },
+  getTimelineStructure: (params?: TimelineStructureParams, options?: SignalOptions) => {
+    const query: TimelineStructureQueryInput = {
+      zoom: params?.zoom,
+      mode: params?.mode,
+      windowStart: toNumericQuery(params?.windowStart),
+      windowEnd: toNumericQuery(params?.windowEnd),
+      projectIds: toCsv(params?.projectIds)
+    };
+
+    return contractClient.call('timeline.structure', { query }, { signal: options?.signal });
+  },
+  getTimelineSummary: (params?: TimelineSummaryParams, options?: SignalOptions) => {
+    const query: TimelineSummaryQueryInput = {
+      zoom: params?.zoom,
+      windowStart: toNumericQuery(params?.windowStart),
+      windowEnd: toNumericQuery(params?.windowEnd),
+      playheadTs: toNumericQuery(params?.playheadTs),
+      bucketStart: toNumericQuery(params?.bucketStart),
+      bucketEnd: toNumericQuery(params?.bucketEnd),
+      projectIds: toCsv(params?.projectIds)
+    };
+
+    return contractClient.call('timeline.summary', { query }, { signal: options?.signal });
   },
 
-  listItems: () => request<Item[]>('/api/items'),
-  getItemDetail: (itemId: string) => request<ItemDetailDto>(`/api/items/${encodeURIComponent(itemId)}/detail`),
-  updateItem: (itemId: string, patch: Partial<Item>) =>
-    request<Item>(`/api/items/${encodeURIComponent(itemId)}`, { method: 'PATCH', body: patch }),
-  completeItem: (itemId: string) => request<Item>(`/api/items/${encodeURIComponent(itemId)}/complete`, { method: 'POST' }),
-  changeItemStatus: (itemId: string, to: ItemStatus, reason?: string) =>
-    request<Item>(`/api/items/${encodeURIComponent(itemId)}/status`, { method: 'POST', body: { to, reason } }),
-  scheduleItem: (itemId: string, scheduledAt?: number, dueAt?: number) =>
-    request<Item>(`/api/items/${encodeURIComponent(itemId)}/schedule`, { method: 'POST', body: { scheduledAt, dueAt } }),
-  deferItem: (itemId: string, snoozedUntil: number) =>
-    request<Item>(`/api/items/${encodeURIComponent(itemId)}/defer`, { method: 'POST', body: { snoozedUntil } }),
-  updateTags: (itemId: string, add?: string[], remove?: string[]) =>
-    request<{ updated: boolean }>(`/api/items/${encodeURIComponent(itemId)}/tags`, {
-      method: 'POST',
-      body: { add, remove }
-    }),
-  addLink: (itemId: string, input: { url: string; label?: string; kind?: Link['kind'] }) =>
-    request<Link>(`/api/items/${encodeURIComponent(itemId)}/links`, {
-      method: 'POST',
-      body: input
-    }),
+  listItems: () => contractClient.call('items.list'),
+  getItemDetail: (itemId: string) =>
+    contractClient.call('items.detail', { params: { itemId } }),
+  updateItem: (itemId: string, patch: ItemPatchInput) =>
+    contractClient.call('items.update', { params: { itemId }, body: patch }),
+  completeItem: (itemId: string) => contractClient.call('items.complete', { params: { itemId } }),
+  changeItemStatus: (itemId: string, to: ItemStatusInput, reason?: string) =>
+    contractClient.call('items.status', { params: { itemId }, body: { to, reason } }),
+  scheduleItem: (itemId: string, scheduledAt?: ItemScheduleInput['scheduledAt'], dueAt?: ItemScheduleInput['dueAt']) =>
+    contractClient.call('items.schedule', { params: { itemId }, body: { scheduledAt, dueAt } }),
+  deferItem: (itemId: string, snoozedUntil: ItemDeferInput['snoozedUntil']) =>
+    contractClient.call('items.defer', { params: { itemId }, body: { snoozedUntil } }),
+  updateTags: (itemId: string, add?: ItemTagUpdateInput['add'], remove?: ItemTagUpdateInput['remove']) =>
+    contractClient.call('items.tags', { params: { itemId }, body: { add, remove } }),
+  addLink: (itemId: string, input: ItemLinkInput) =>
+    contractClient.call('items.links', { params: { itemId }, body: input }),
   uploadAttachment: async (itemId: string, file: File) => {
     const contentBase64 = await toBase64(file);
-    return request<Attachment>(`/api/items/${encodeURIComponent(itemId)}/attachments`, {
-      method: 'POST',
+    return contractClient.call('items.attachments.upload', {
+      params: { itemId },
       body: {
         originalName: file.name,
         mimeType: file.type || 'application/octet-stream',
@@ -150,22 +181,24 @@ export const api = {
     });
   },
 
-  search: (params: {
-    q: string;
-    statuses?: string[];
-    projectIds?: string[];
-    tagAny?: string[];
-    tagAll?: string[];
-    includeDone?: boolean;
-  }) => {
-    const query = new URLSearchParams({ q: params.q });
-    if (params.statuses?.length) query.set('statuses', params.statuses.join(','));
-    if (params.projectIds?.length) query.set('projectIds', params.projectIds.join(','));
-    if (params.tagAny?.length) query.set('tagAny', params.tagAny.join(','));
-    if (params.tagAll?.length) query.set('tagAll', params.tagAll.join(','));
-    if (params.includeDone !== undefined) query.set('includeDone', params.includeDone ? 'true' : 'false');
-    return request<SearchResultDto[]>(`/api/search?${query.toString()}`);
+  search: (params: SearchParams) => {
+    const query: SearchQueryInput = {
+      q: params.q,
+      statuses: toCsv(params.statuses),
+      projectIds: toCsv(params.projectIds),
+      tagAny: toCsv(params.tagAny),
+      tagAll: toCsv(params.tagAll),
+      includeDone: params.includeDone === undefined ? undefined : params.includeDone ? 'true' : 'false'
+    };
+
+    return contractClient.call('search.query', { query });
   },
 
-  listSavedViews: () => request<SavedView[]>('/api/saved-views')
+  listSavedViews: () => contractClient.call('savedViews.list'),
+  createSavedView: (input: SavedViewCreateInput) =>
+    contractClient.call('savedViews.create', { body: input }),
+  updateSavedView: (savedViewId: string, patch: SavedViewPatchInput) =>
+    contractClient.call('savedViews.update', { params: { savedViewId }, body: patch }),
+  deleteSavedView: (savedViewId: string) =>
+    contractClient.call('savedViews.delete', { params: { savedViewId } })
 };

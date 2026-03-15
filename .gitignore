@@ -3,11 +3,12 @@ dist/
 .next/
 .uploads/
 test-results/
+tmp/arch/
 .DS_Store
 *.log
 *.db
 *.sqlite
 taskio.db
 taskio.db-*
-
+tmp/
 # GOTCHA: Use `.next/` (not `*.next/`) so Next.js output is reliably ignored.

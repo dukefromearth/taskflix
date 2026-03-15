@@ -1,2 +1,0 @@
--- Intentionally left blank.
--- Timeline-specific indexes were removed from the canonical schema path.

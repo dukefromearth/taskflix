@@ -1,5 +1,3 @@
-import { jsonOk } from '@/api/next-helpers';
+import { getHealthRoute } from '@/api/health-route-bindings';
 
-export async function GET() {
-  return jsonOk({ ok: true });
-}
+export const GET = getHealthRoute;

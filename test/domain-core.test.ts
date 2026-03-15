@@ -65,8 +65,8 @@ describe('service view/query behavior', () => {
         timezone: 'UTC'
       });
       expect(buckets.length).toBeGreaterThan(0);
-      expect(buckets[0].start).toBe(start);
-      expect(buckets[buckets.length - 1].end).toBe(end);
+      expect(buckets[0]!.start).toBe(start);
+      expect(buckets[buckets.length - 1]!.end).toBe(end);
     }
   });
 

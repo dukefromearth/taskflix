@@ -44,10 +44,6 @@ export const getDatabaseRuntime = (): DatabaseRuntime => {
   return runtime;
 };
 
-export const setDatabaseRuntime = (next: DatabaseRuntime): void => {
-  runtime = next;
-};
-
 export const closeDatabaseRuntime = async (): Promise<void> => {
   if (!runtime) return;
   await runtime.db.destroy();

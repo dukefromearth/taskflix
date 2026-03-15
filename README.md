@@ -29,7 +29,30 @@ Taskio is now a Next.js App Router full-stack application with a SQLite/Kysely b
 - `npm run test` runs Vitest
 - `npm run test:integration` runs the single Playwright golden-path timeline integration test
 - `npm run test:integration:headed` runs the same integration test in headed mode for local debugging
+- `npm run arch -- discover all <topic>` runs the 4-step architecture discovery workflow
 - `npm run verify` runs tests and production build
+
+## Architecture discovery
+
+Use one command:
+
+- `npm run arch -- discover all <topic>`
+
+Example:
+
+- `npm run arch -- discover all schedule`
+
+This writes a 4-step discovery report under `tmp/arch/discover/<topic-slug>/`:
+
+- `index.json`
+- `1-scope/scope.json` (topic/file/entrypoint scope)
+- `2-flows/flows.json` (deps/types/callgraph flow views)
+- `3-contracts/contracts.json` (handlers/schemas/db/invariants)
+- `4-confidence/confidence.json` (`proven` / `inferred` / `unknown-dynamic`)
+
+`1-scope/scope.json` is compact by default; add `--verbose` for per-term BM25 diagnostics.
+
+See the full guide: `tools/arch/README.md`.
 
 ## Notes
 

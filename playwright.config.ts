@@ -2,7 +2,7 @@ import path from 'node:path';
 import { defineConfig } from '@playwright/test';
 
 const integrationDbPath = path.resolve(process.cwd(), 'tmp/integration/taskio.integration.sqlite');
-const port = 4100;
+const port = Number(process.env.PLAYWRIGHT_PORT ?? 4100);
 
 export default defineConfig({
   testDir: './test/integration',

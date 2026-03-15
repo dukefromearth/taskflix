@@ -14,7 +14,7 @@ export type MigrationPair = {
   downPath: string;
 };
 
-export const defaultMigrationDir = path.join(process.cwd(), 'migrations');
+const defaultMigrationDir = path.join(process.cwd(), 'migrations');
 
 const ensureMigrationsTable = (sqlite: Database.Database): void => {
   sqlite.exec(`
@@ -56,7 +56,7 @@ const loadMigrationPairs = (migrationDir = defaultMigrationDir): MigrationPair[]
     .sort((a, b) => a.name.localeCompare(b.name));
 };
 
-export const getAppliedMigrations = (sqlite: Database.Database): Array<{ name: string; appliedAt: number }> => {
+const getAppliedMigrations = (sqlite: Database.Database): Array<{ name: string; appliedAt: number }> => {
   ensureMigrationsTable(sqlite);
   const rows = sqlite
     .prepare('SELECT name, applied_at as appliedAt FROM schema_migrations ORDER BY name ASC')
